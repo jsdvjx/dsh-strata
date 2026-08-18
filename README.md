@@ -17,7 +17,7 @@ is the shape of the run at a glance: where you spoke, how much work each prompt 
 where it went wrong.
 
 <p align="center">
-  <img src="docs/rail.png" alt="The rail in the scrollbar gutter: blue bars and dots for your messages, red dots for failures, an amber line for a model retry" width="120">
+  <img src="docs/demo.gif" alt="Live demo: hovering expands the rail with a preview card, clicking a band or an anchor dot jumps, dragging the lens scrubs the whole session" width="840">
 </p>
 
 ## What the map shows
