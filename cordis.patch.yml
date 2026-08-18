@@ -1,0 +1,9 @@
+# Bundle layer contributed by dsh-strata.
+#
+# The Node half is inert on purpose: this plugin lives entirely in the browser.
+# The row exists so the composition carries the package, which is what makes
+# dsh-client-modules scan its `dsh.client` declaration into the browser roster
+# and serve /plugins/dsh-strata/client.js.
+- insert:
+    - id: strata
+      name: 'dsh-strata'
