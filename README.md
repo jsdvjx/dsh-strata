@@ -70,7 +70,7 @@ not scroll, or a non-chat view such as Trajectory.
 ## Install
 
 ```sh
-dsh plugin --profile web add <path-or-git-url>
+dsh plugin --profile web add "github:jsdvjx/dsh-strata#main"
 ```
 
 Then restart `dsh web`. To remove:

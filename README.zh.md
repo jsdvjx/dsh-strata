@@ -56,7 +56,7 @@
 ## 安装
 
 ```sh
-dsh plugin --profile web add <本地路径或 git 地址>
+dsh plugin --profile web add "github:jsdvjx/dsh-strata#main"
 ```
 
 然后重启 `dsh web`。卸载：
