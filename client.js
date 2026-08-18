@@ -335,8 +335,16 @@ window.__ModuleLoader__.load({
 
       const rail = doc.createElement('div')
       rail.className = 'dsh-strata-rail'
+      // Scrollbar semantics: assistive tech reads the rail as the scroll
+      // control it replaces, and the keyboard drives it like one.
+      rail.setAttribute('role', 'scrollbar')
+      rail.setAttribute('aria-orientation', 'vertical')
+      rail.setAttribute('aria-valuemin', '0')
+      rail.setAttribute('aria-valuemax', '100')
+      rail.tabIndex = 0
       const canvas = doc.createElement('canvas')
       canvas.className = 'dsh-strata-canvas'
+      canvas.setAttribute('aria-hidden', 'true')
       const lens = doc.createElement('div')
       lens.className = 'dsh-strata-lens'
       const older = doc.createElement('button')
@@ -690,6 +698,8 @@ window.__ModuleLoader__.load({
         const y = clamp(scroller.scrollTop * scale(), 0, Math.max(0, railH - height))
         lens.style.height = Math.round(height) + 'px'
         lens.style.transform = 'translateY(' + Math.round(y) + 'px)'
+        const denom = Math.max(1, contentHeight - scroller.clientHeight)
+        rail.setAttribute('aria-valuenow', String(Math.round(clamp(scroller.scrollTop / denom, 0, 1) * 100)))
         // "You are here": the last anchor at or above the reading line.
         const reading = scroller.scrollTop + scroller.clientHeight * 0.25
         let current = -1
@@ -884,6 +894,25 @@ window.__ModuleLoader__.load({
         scroller.scrollBy({ top: event.deltaY })
         event.preventDefault()
       }
+      const onKeyDown = (event) => {
+        const page = scroller.clientHeight
+        const steps = {
+          ArrowUp: -page * 0.15,
+          ArrowDown: page * 0.15,
+          PageUp: -page * 0.85,
+          PageDown: page * 0.85,
+        }
+        if (event.key in steps) {
+          scroller.scrollBy({ top: steps[event.key], behavior: 'smooth' })
+        } else if (event.key === 'Home') {
+          scroller.scrollTo({ top: 0, behavior: 'smooth' })
+        } else if (event.key === 'End') {
+          scroller.scrollTo({ top: contentHeight, behavior: 'smooth' })
+        } else {
+          return
+        }
+        event.preventDefault()
+      }
       const onDoubleClick = () => {
         pinned = !pinned
         try {
@@ -947,6 +976,7 @@ window.__ModuleLoader__.load({
       rail.addEventListener('pointercancel', onUp)
       rail.addEventListener('wheel', onWheel, { passive: false })
       rail.addEventListener('dblclick', onDoubleClick)
+      rail.addEventListener('keydown', onKeyDown)
       older.addEventListener('click', onOlder)
       window.addEventListener('resize', schedule)
 
@@ -973,6 +1003,7 @@ window.__ModuleLoader__.load({
         rail.removeEventListener('pointercancel', onUp)
         rail.removeEventListener('wheel', onWheel)
         rail.removeEventListener('dblclick', onDoubleClick)
+        rail.removeEventListener('keydown', onKeyDown)
         older.removeEventListener('click', onOlder)
         anchorsEl.removeEventListener('click', onAnchorClick)
         anchorsEl.removeEventListener('mouseover', onAnchorOver)
