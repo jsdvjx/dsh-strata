@@ -59,7 +59,9 @@ usually the reason you reached for the map.
   (kind, `n/total` for your own messages, and the row's text).
 - **Click** a band to scroll it into reading position; the row flashes when it lands.
 - **Click empty track or drag** to scrub proportionally, like a scrollbar.
-- **Wheel** over the rail to scroll the transcript.
+- **Wheel** over the rail or the dots to scroll the transcript.
+- **Keyboard**: the rail is focusable — arrows nudge, PageUp/PageDown page,
+  Home/End jump to the ends (`role=scrollbar` with a live `aria-valuenow`).
 - **Double-click** to pin the rail open (persisted per browser).
 - The **`⌃` cap** appears above the rail while older history is still unloaded; clicking it
   triggers the transcript's own *load older* and the map extends.
