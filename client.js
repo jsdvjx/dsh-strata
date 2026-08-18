@@ -486,13 +486,17 @@ window.__ModuleLoader__.load({
        */
       function findOlderButton(firstRow) {
         if (firstRow === undefined || firstRow === null) return null
-        const buttons = scroller.querySelectorAll('button')
-        for (const button of buttons) {
+        let positional = null
+        for (const button of scroller.querySelectorAll('button')) {
           const relation = button.compareDocumentPosition(firstRow)
           // Only a control that precedes the first row can be the pager.
-          if ((relation & Node.DOCUMENT_POSITION_FOLLOWING) !== 0) return button
+          if ((relation & Node.DOCUMENT_POSITION_FOLLOWING) === 0) continue
+          // The pager's own label wins; position alone is the fallback, so a
+          // future control injected above the flow cannot hijack the cap.
+          if (/加载更早|load\s?older|earlier/i.test(button.textContent || '')) return button
+          if (positional === null) positional = button
         }
-        return null
+        return positional
       }
 
       /**
