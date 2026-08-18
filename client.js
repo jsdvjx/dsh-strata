@@ -919,16 +919,26 @@ window.__ModuleLoader__.load({
       const onAnchorOver = (event) => {
         const index = anchorIndexOf(event.target)
         if (index === -1) return
+        // Light the mapped band too, so the dot and its stratum read as one.
+        hoverIndex = index
+        canvasSignature = ''
         showCard(index)
+        schedule()
       }
       const onAnchorOut = (event) => {
         if (anchorIndexOf(event.target) === -1) return
         if (anchorIndexOf(event.relatedTarget) !== -1) return
+        hoverIndex = -1
+        canvasSignature = ''
         hideCard()
+        schedule()
       }
       anchorsEl.addEventListener('click', onAnchorClick)
       anchorsEl.addEventListener('mouseover', onAnchorOver)
       anchorsEl.addEventListener('mouseout', onAnchorOut)
+      // The dots sit outside the rail, but a wheel gesture over them should
+      // scroll the transcript all the same — dead zones read as bugs.
+      anchorsEl.addEventListener('wheel', onWheel, { passive: false })
       rail.addEventListener('pointerenter', onEnter)
       rail.addEventListener('pointerleave', onLeave)
       rail.addEventListener('pointermove', onMove)
@@ -967,6 +977,7 @@ window.__ModuleLoader__.load({
         anchorsEl.removeEventListener('click', onAnchorClick)
         anchorsEl.removeEventListener('mouseover', onAnchorOver)
         anchorsEl.removeEventListener('mouseout', onAnchorOut)
+        anchorsEl.removeEventListener('wheel', onWheel)
         // Hand the scrollbar back before letting go of the element.
         suppressNativeThumb(false)
         if (scroller !== null) scroller.removeEventListener('scroll', schedule)
