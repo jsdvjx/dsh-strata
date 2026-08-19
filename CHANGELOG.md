@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.4 — 2026-08-19
+
+- Hovering a band now highlights it visibly regardless of its resting
+  opacity. The old treatment only raised alpha to 1 — a no-op on the user
+  blue and error red, which already sit at 1. A hovered band now widens,
+  glows in its own color, and carries a bright inner stroke; full-width
+  bands (where the widening clips at the canvas edge) still read through
+  the stroke and glow.
+
 ## 0.3.3 — 2026-08-19
 
 - The lens gains an accent-blue edge glow — an outer halo spilling past the

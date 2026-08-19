@@ -755,9 +755,13 @@ window.__ModuleLoader__.load({
             const band = bands[index]
             if ((pass === 0) === isUserKind(band.kind)) continue
             const { y, h: height, spec } = geometryOf(band)
-            const width = Math.max(2, railW * spec.width)
+            const hovered = index === hoverIndex
+            // Alpha alone cannot highlight a band that is already opaque (the
+            // user blue, errors): the hovered band also widens leftward and
+            // carries a same-color glow.
+            const width = Math.max(2, railW * spec.width) + (hovered ? 3 : 0)
             const x = railW - width
-            g.globalAlpha = index === hoverIndex ? 1 : spec.alpha
+            g.globalAlpha = hovered ? 1 : spec.alpha
             g.fillStyle = band.error ? tones.error : tones[spec.tone]
             if (spec.rule === true) {
               // A compaction is a boundary, not a body: draw it as a rule so
@@ -768,6 +772,10 @@ window.__ModuleLoader__.load({
               continue
             }
             const radius = Math.min(spec.round, height / 2, width / 2)
+            if (hovered) {
+              g.shadowColor = g.fillStyle
+              g.shadowBlur = 7
+            }
             g.beginPath()
             if (typeof g.roundRect === 'function') {
               g.roundRect(x, y, width, height, radius)
@@ -775,6 +783,16 @@ window.__ModuleLoader__.load({
               g.rect(x, y, width, height)
             }
             g.fill()
+            if (hovered) {
+              g.shadowBlur = 0
+              g.shadowColor = 'transparent'
+              // Full-width bands clip the widen and the sideways glow at the
+              // canvas edge, so the unambiguous mark is a bright inner stroke.
+              g.globalAlpha = 0.85
+              g.strokeStyle = '#ffffff'
+              g.lineWidth = 1.5
+              g.stroke()
+            }
           }
         }
         g.globalAlpha = 1
