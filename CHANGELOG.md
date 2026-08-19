@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.3 — 2026-08-19
+
+- The lightweight preview card is gone — the wall is the single hover
+  surface (non-user anchors now highlight only).
+- The hovered anchor's card always packs into the slot NEAREST its dot:
+  rightmost column, vertically centred on the anchor, with the rest of the
+  collage flowing around the reservation. Position changes glide as swap
+  animations on a spring.
+- Discipline split by gesture: anchor-side hovers relocate the spotlight;
+  wall-side hovers only move the highlight and the solid string — the card
+  under the pointer never slides away.
+
 ## 0.7.2 — 2026-08-19
 
 - The board is gone: cards float straight over the transcript, which stays

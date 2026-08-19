@@ -204,41 +204,6 @@ window.__ModuleLoader__.load({
   text-align: center;
 }
 .dsh-strata-older[data-available="1"] { display: block; }
-.dsh-strata-card {
-  position: absolute;
-  right: calc(100% + 10px);
-  top: 0;
-  width: 264px;
-  box-sizing: border-box;
-  padding: 8px 10px 9px;
-  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
-  border-radius: 9px;
-  background: var(--dsw-alias-bg-layer-3, #22242a);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, .18);
-  opacity: 0;
-  pointer-events: none;
-  transition: opacity .12s ease;
-}
-.dsh-strata-card[data-show="1"] { opacity: 1; }
-.dsh-strata-card-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-bottom: 4px;
-  color: var(--dsw-alias-label-tertiary, #8b9099);
-  font-size: 11px;
-  line-height: 16px;
-}
-.dsh-strata-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
-.dsh-strata-card-body {
-  color: var(--dsw-alias-label-primary, #e8eaed);
-  font-size: 12px;
-  line-height: 17px;
-  max-height: 102px;
-  overflow: hidden;
-  overflow-wrap: anywhere;
-  white-space: pre-wrap;
-}
 /* Clue wall: a floating panel over the right half of the screen, opened by
    HOVERING a user dot. Cards run in one chronological column (so the bezier
    back to each anchor dot never crosses another card); paging buttons at the
@@ -322,10 +287,16 @@ window.__ModuleLoader__.load({
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-3, #22242a);
   cursor: pointer;
-  display: none;
-  transition: border-color .12s ease;
+  visibility: hidden;
+  pointer-events: none;
+  /* Position swaps glide: when the spotlight claims the slot nearest its
+     anchor, the displaced cards trade places on a spring. */
+  transition:
+    top .28s cubic-bezier(.34, 1.56, .64, 1),
+    left .28s cubic-bezier(.34, 1.56, .64, 1),
+    border-color .12s ease;
 }
-.dsh-strata-wallcard[data-on="1"] { display: block; }
+.dsh-strata-wallcard[data-on="1"] { visibility: visible; pointer-events: auto; }
 .dsh-strata-wallcard:hover {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 70%, transparent);
 }
@@ -377,7 +348,7 @@ window.__ModuleLoader__.load({
   -webkit-line-clamp: 10;
 }
 @media (prefers-reduced-motion: reduce) {
-  .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas, .dsh-strata-card,
+  .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas,
   .dsh-strata-wallcard { transition: none; }
 }
 `
@@ -532,17 +503,6 @@ window.__ModuleLoader__.load({
       older.setAttribute('aria-hidden', 'true')
       older.title = T.older
       older.textContent = '⌃'
-      const card = doc.createElement('div')
-      card.className = 'dsh-strata-card'
-      const cardHead = doc.createElement('div')
-      cardHead.className = 'dsh-strata-card-head'
-      const cardDot = doc.createElement('span')
-      cardDot.className = 'dsh-strata-dot'
-      const cardKind = doc.createElement('span')
-      const cardBody = doc.createElement('div')
-      cardBody.className = 'dsh-strata-card-body'
-      cardHead.append(cardDot, cardKind)
-      card.append(cardHead, cardBody)
       const anchorsEl = doc.createElement('div')
       anchorsEl.className = 'dsh-strata-anchors'
       anchorsEl.style.width = ANCHOR_W + 'px'
@@ -573,7 +533,7 @@ window.__ModuleLoader__.load({
       wall.append(wallLink, wallHead, wallBody)
       doc.body.appendChild(wall)
       rail.append(canvas, shadeTop, shadeBottom, lens, older)
-      root.append(anchorsEl, rail, card)
+      root.append(anchorsEl, rail)
 
       const g = canvas.getContext('2d')
 
@@ -1021,10 +981,7 @@ window.__ModuleLoader__.load({
       function setVisible(next) {
         root.dataset.show = next ? '1' : '0'
         suppressNativeThumb(next)
-        if (!next) {
-          hideCard()
-          closeWall()
-        }
+        if (!next) closeWall()
       }
 
       let autoLoadLatched = false
@@ -1156,30 +1113,6 @@ window.__ModuleLoader__.load({
         const text = raw.replace(/\s+/g, ' ').trim()
         if (text === '') return T.empty
         return text.length > 220 ? text.slice(0, 220) + '…' : text
-      }
-
-      /**
-       * Show the preview card beside a band.
-       * @param index - band index.
-       */
-      function showCard(index) {
-        const band = bands[index]
-        const spec = SPECS[band.kind] || FALLBACK
-        const tones = palette()
-        const counted = band.userIndex >= 0 && userTotal > 1
-        cardDot.style.background = band.error ? tones.error : tones[spec.tone]
-        cardKind.textContent = (T[band.kind] || T.unknown)
-          + (counted ? ' · ' + (band.userIndex + 1) + '/' + userTotal : '')
-        cardBody.textContent = previewOf(band)
-        card.dataset.show = '1'
-        const { y, h: height } = geometryOf(band)
-        const offset = clamp(y + height / 2 - 28, 0, Math.max(0, railH - card.offsetHeight))
-        card.style.transform = 'translateY(' + Math.round(offset) + 'px)'
-      }
-
-      /** Retract the preview card. */
-      function hideCard() {
-        card.dataset.show = '0'
       }
 
       /**
@@ -1333,41 +1266,89 @@ window.__ModuleLoader__.load({
           body.className = 'dsh-strata-wallcardbody'
           body.textContent = prompt.text === '' ? T.empty : prompt.text
           el.append(head, body)
+          el.style.transition = 'none'
           wallCards.append(el)
           cards.push({ el, no, meta })
         }
         wallDom = { prompts, cards }
         wallWin = { a: 0, b: -1 }
+        window.requestAnimationFrame(() => {
+          if (wallDom === null || wallDom.cards !== cards) return
+          for (const cardRef of cards) cardRef.el.style.transition = ''
+        })
       }
 
       /** Current visible window [a, b] into the prompt list. */
       let wallWin = { a: 0, b: -1 }
 
       /**
-       * Greedy masonry fit: place heights[a..b] into `cols` columns and
-       * report the tallest column.
-       * @param heights - measured card heights.
-       * @param a - window start.
-       * @param b - window end (inclusive).
-       * @param cols - column count.
-       * @param gap - gap px.
-       * @returns tallest column height.
+       * The focus card's anchor-side slot: rightmost column, vertically
+       * aligned with its dot on the rail.
+       * @param areaTop - card area top in viewport px.
+       * @returns local y of the dot centre, or null (no dot resolvable).
        */
-      function masonryHeight(heights, a, b, cols, gap) {
-        const col = new Array(cols).fill(0)
-        for (let i = a; i <= b; i += 1) {
-          let best = 0
-          for (let c = 1; c < cols; c += 1) if (col[c] < col[best]) best = c
-          col[best] += heights[i] + gap
-        }
-        return Math.max(...col)
+      function wallAnchorLocalY(areaTop) {
+        if (wallDom === null) return null
+        const total = wallDom.prompts.length
+        const loadedStart = Math.max(0, total - userTotal)
+        const userIdx = wallFocusIdx - loadedStart
+        if (userIdx < 0 || userBandIndex[userIdx] === undefined) return null
+        const dot = anchorsEl.querySelector('[data-index="' + userBandIndex[userIdx] + '"]')
+        if (dot === null) return null
+        const rect = dot.getBoundingClientRect()
+        return rect.top + rect.height / 2 - areaTop
       }
 
       /**
-       * Lay the wall out as a packed collage: every card takes exactly the
-       * height its content needs, cards flow into masonry columns, and the
-       * window holds as many as genuinely fit — all of them when possible.
-       * Whatever remains folds into the ↑/↓ pagers.
+       * Pack heights[a..b] into masonry columns. The focused card claims the
+       * slot NEAREST its anchor — rightmost column, centred on the dot — and
+       * the rest flow chronologically around the reservation.
+       * @param heights - measured card heights.
+       * @param a - window start.
+       * @param b - window end (inclusive).
+       * @param geometry - {cols, colW, gap, areaH, anchorY} for this pass.
+       * @param place - card placement sink (i, left, top), or null to only measure.
+       * @returns tallest column height.
+       */
+      function packWindow(heights, a, b, geometry, place) {
+        const { cols, colW, gap, areaH, anchorY } = geometry
+        const col = new Array(cols).fill(0)
+        let reserved = null
+        const focus = wallFocusIdx
+        if (focus >= a && focus <= b && anchorY !== null && cols > 1) {
+          const h = heights[focus]
+          const top = clamp(anchorY - h / 2, 0, Math.max(0, areaH - h))
+          reserved = { top: top - gap, bottom: top + h + gap }
+          if (place !== null) place(focus, (cols - 1) * (colW + gap), top)
+        }
+        for (let i = a; i <= b; i += 1) {
+          if (reserved !== null && i === focus) continue
+          let best = -1
+          let bestY = Infinity
+          for (let c = 0; c < cols; c += 1) {
+            let y = col[c]
+            if (reserved !== null && c === cols - 1
+              && y + heights[i] > reserved.top && y < reserved.bottom) {
+              y = reserved.bottom
+            }
+            if (y < bestY) {
+              bestY = y
+              best = c
+            }
+          }
+          if (place !== null) place(i, best * (colW + gap), bestY)
+          col[best] = bestY + heights[i] + gap
+        }
+        let max = Math.max(...col)
+        if (reserved !== null) max = Math.max(max, reserved.bottom - gap)
+        return max
+      }
+
+      /**
+       * Lay the wall out as a packed collage. Cards take exactly the height
+       * their content needs; the window holds as many as genuinely fit; the
+       * spotlight card always lands nearest its anchor, and position changes
+       * animate as swaps.
        * @param mode - 'around' the focus (default), 'up' ending at anchor,
        *   'down' starting at anchor, or 'keep' the current window.
        * @param anchor - window anchor index for 'up'/'down'.
@@ -1376,28 +1357,26 @@ window.__ModuleLoader__.load({
         if (wallDom === null) return
         const prompts = wallDom.prompts
         const total = prompts.length
-        const loadedStart = Math.max(0, total - userTotal)
         wallTitle.textContent = T.wallTitle.replace('{n}', String(total))
         wallHint.textContent = T.wallHint
         const area = wallCards.getBoundingClientRect()
         const gap = 10
         const cols = clamp(Math.round(area.width / 230), 1, 3)
         const colW = Math.floor((area.width - gap * (cols - 1)) / cols)
-        // Measure every card at the column width (hidden, absolute).
         const heights = new Array(total)
         for (let i = 0; i < total; i += 1) {
           const { el } = wallDom.cards[i]
-          el.dataset.on = '1'
-          el.style.visibility = 'hidden'
           el.style.width = colW + 'px'
-          el.style.left = '0'
-          el.style.top = '0'
+          heights[i] = el.offsetHeight
         }
-        for (let i = 0; i < total; i += 1) {
-          heights[i] = wallDom.cards[i].el.offsetHeight
+        const geometry = {
+          cols,
+          colW,
+          gap,
+          areaH: area.height - 4,
+          anchorY: wallAnchorLocalY(area.top),
         }
-        const availH = area.height - 4
-        const fits = (a, b) => masonryHeight(heights, a, b, cols, gap) <= availH
+        const fits = (a, b) => packWindow(heights, a, b, geometry, null) <= geometry.areaH
         let a
         let b
         if (mode === 'keep' && wallWin.b >= wallWin.a) {
@@ -1429,21 +1408,34 @@ window.__ModuleLoader__.load({
           }
         }
         wallWin = { a, b }
-        // Place the window; hide the rest.
-        const col = new Array(cols).fill(0)
+        for (let i = 0; i < total; i += 1) {
+          wallDom.cards[i].el.dataset.on = i >= a && i <= b ? '1' : '0'
+        }
+        packWindow(heights, a, b, geometry, (i, left, top) => {
+          const { el } = wallDom.cards[i]
+          el.style.left = Math.round(left) + 'px'
+          el.style.top = Math.round(top) + 'px'
+        })
+        wallPagerTop.dataset.on = a > 0 ? '1' : '0'
+        wallPagerTop.textContent = T.pageUp.replace('{n}', String(a))
+        wallPagerBottom.dataset.on = b < total - 1 ? '1' : '0'
+        wallPagerBottom.textContent = T.pageDown.replace('{n}', String(total - 1 - b))
+        restyleWall()
+      }
+
+      /**
+       * Update focus/loaded styling, head texts and strings WITHOUT moving
+       * any card — the wall-side hover path, so the card under the pointer
+       * never slides away.
+       */
+      function restyleWall() {
+        if (wallDom === null) return
+        const prompts = wallDom.prompts
+        const total = prompts.length
+        const loadedStart = Math.max(0, total - userTotal)
         for (let i = 0; i < total; i += 1) {
           const { el, no, meta } = wallDom.cards[i]
-          if (i < a || i > b) {
-            el.dataset.on = '0'
-            el.style.visibility = ''
-            continue
-          }
-          let best = 0
-          for (let c = 1; c < cols; c += 1) if (col[c] < col[best]) best = c
-          el.style.left = (best * (colW + gap)) + 'px'
-          el.style.top = Math.round(col[best]) + 'px'
-          col[best] += heights[i] + gap
-          el.style.visibility = ''
+          if (el.dataset.on !== '1') continue
           el.dataset.loaded = i >= loadedStart ? '1' : '0'
           el.dataset.focus = i === wallFocusIdx ? '1' : '0'
           no.textContent = String(i + 1)
@@ -1453,18 +1445,15 @@ window.__ModuleLoader__.load({
           meta.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
             + (i < loadedStart ? ' · ' + (wallBusy && i === wallFocusIdx ? T.loading : T.unloaded) : '')
         }
-        wallPagerTop.dataset.on = a > 0 ? '1' : '0'
-        wallPagerTop.textContent = T.pageUp.replace('{n}', String(a))
-        wallPagerBottom.dataset.on = b < total - 1 ? '1' : '0'
-        wallPagerBottom.textContent = T.pageDown.replace('{n}', String(total - 1 - b))
         updateWallLinks()
       }
 
       /**
        * Bezier from every visible card's right edge to its anchor dot
        * (dashed toward the rail top for prompts above the loaded window).
-       * The lines ride ABOVE the collage at low opacity — coordinates are
-       * re-read live so transcript scrolling keeps them attached.
+       * Only the spotlight hangs by a solid string; every other card's is
+       * dashed and faint. Coordinates are re-read live so transcript
+       * scrolling keeps the lines attached.
        */
       function updateWallLinks() {
         if (wallDom === null || !wallOpen) return
@@ -1483,7 +1472,6 @@ window.__ModuleLoader__.load({
           const startY = cardRect.top + cardRect.height / 2 - wallRect.top
           let endX = wallRect.width + 60
           let endY = railRect.top + 2 - wallRect.top
-          let loaded = false
           if (i >= loadedStart) {
             const bandIdx = userBandIndex[i - loadedStart]
             const dot = bandIdx === undefined
@@ -1493,7 +1481,6 @@ window.__ModuleLoader__.load({
               const dotRect = dot.getBoundingClientRect()
               endX = dotRect.left + dotRect.width / 2 - wallRect.left
               endY = dotRect.top + dotRect.height / 2 - wallRect.top
-              loaded = true
             }
           }
           const focused = i === wallFocusIdx
@@ -1523,7 +1510,6 @@ window.__ModuleLoader__.load({
       function openWall(userIdx) {
         wallOpen = true
         cancelWallClose()
-        hideCard()
         const spotlight = (prompts) => {
           buildWall(prompts)
           wall.dataset.show = '1'
@@ -1588,7 +1574,7 @@ window.__ModuleLoader__.load({
         }
         wallBusy = true
         wallFocusIdx = i
-        layoutWall('keep')
+        restyleWall()
         for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
           if (olderButton === null || autoLoadLatched) break
           autoLoadLatched = true
@@ -1647,7 +1633,7 @@ window.__ModuleLoader__.load({
           canvasSignature = ''
           schedule()
         }
-        layoutWall('keep')
+        restyleWall()
       }
       const onWallKey = (event) => {
         if (event.key === 'Escape' && wallOpen) {
@@ -1758,7 +1744,6 @@ window.__ModuleLoader__.load({
           expanded = pinned
           root.dataset.expanded = pinned ? '1' : '0'
           hoverIndex = -1
-          hideCard()
           canvasSignature = ''
           schedule()
         }, 300)
@@ -1772,9 +1757,9 @@ window.__ModuleLoader__.load({
         if (index === hoverIndex) return
         hoverIndex = index
         canvasSignature = ''
-        if (index === -1) hideCard()
-        else if (isUserKind(bands[index].kind)) openWall(bands[index].userIndex)
-        else showCard(index)
+        if (index !== -1 && isUserKind(bands[index].kind)) {
+          openWall(bands[index].userIndex)
+        }
         schedule()
       }
       const onDown = (event) => {
@@ -1874,7 +1859,6 @@ window.__ModuleLoader__.load({
         hoverIndex = index
         canvasSignature = ''
         if (isUserKind(bands[index].kind)) openWall(bands[index].userIndex)
-        else showCard(index)
         schedule()
       }
       const onAnchorOut = (event) => {
@@ -1882,7 +1866,6 @@ window.__ModuleLoader__.load({
         if (anchorIndexOf(event.relatedTarget) !== -1) return
         hoverIndex = -1
         canvasSignature = ''
-        hideCard()
         schedule()
       }
       anchorsEl.addEventListener('click', onAnchorClick)
@@ -1960,7 +1943,6 @@ window.__ModuleLoader__.load({
         wall.remove()
         anchorsEl.remove()
         rail.remove()
-        card.remove()
       }
     }
 
