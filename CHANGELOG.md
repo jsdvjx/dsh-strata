@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.5.0 — 2026-08-19
+
+The deck becomes a macOS-dock fisheye.
+
+- The card stack now spans the full rail height on a fixed index grid — the
+  deck area matches the scrollbar it annotates.
+- The hovered card magnifies in place around its own slot; neighbours shrink
+  and part with distance (size and shove both taper), far cards rest small at
+  their grid positions. Movement settles on a springy overshoot curve
+  (disabled under prefers-reduced-motion).
+- The stable grid replaces the whole pinned/frozen-frame machinery: nothing
+  can drift, cascade, or leave holes by construction, because the focus
+  always expands centred on the slot the pointer is already inside.
+
 ## 0.4.7 — 2026-08-19
 
 - Hovering a user dot always opens the deck again after history loads in.
