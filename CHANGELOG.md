@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0 — 2026-08-19
+
+Map scale states, switched from a widget under the rail.
+
+- 近 / 中 / 全 segmented pill below the rail (shown while it is awake):
+  initial restores the session-open extent, medium spans half, full maps
+  everything — chain-loading any missing history first with the rail
+  progress bar. The choice persists per browser.
+- Zoomed scales are pinned and slide with the reading position: prepends
+  shift the window, never the scale, so no rescale morph applies there.
+  Bands and anchor dots outside the window are culled.
+
 ## 0.7.7 — 2026-08-19
 
 - Paging slides the window instead of shrinking it. Paging up used to keep

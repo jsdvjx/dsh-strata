@@ -321,6 +321,38 @@ window.__ModuleLoader__.load({
 @keyframes dsh-strata-oldpulse {
   50% { transform: translateX(-50%) scale(1.3); }
 }
+/* Scale switcher under the rail: how much of the session the map spans —
+   the initial window, half, or everything. Shown while the rail is awake. */
+.dsh-strata-zoom {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  display: none;
+  pointer-events: auto;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
+  border-radius: 7px;
+  background: var(--dsw-alias-bg-layer-3, #22242a);
+}
+.dsh-strata-root[data-expanded="1"] .dsh-strata-zoom { display: inline-flex; }
+.dsh-strata-zoom button {
+  width: 18px;
+  height: 16px;
+  padding: 0;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #adb2b8);
+  font-size: 10px;
+  line-height: 1;
+  cursor: pointer;
+}
+.dsh-strata-zoom button:hover { color: var(--dsw-alias-label-primary, #e8eaed); }
+.dsh-strata-zoom button[data-active="1"] {
+  background: color-mix(in srgb, var(--dsh-strata-user) 22%, transparent);
+  color: var(--dsh-strata-user);
+}
 .dsh-strata-wallcard:hover {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 70%, transparent);
 }
@@ -432,6 +464,9 @@ window.__ModuleLoader__.load({
         'wallHint': '点击卡片跳转 · Esc 关闭',
         'pageUp': '↑ 更早 {n} 条',
         'pageDown': '↓ 更新 {n} 条',
+        'zoomInit': '初始视野：会话打开时的范围',
+        'zoomMid': '中等视野：一半会话',
+        'zoomAll': '全景：整个会话（自动补载历史）',
       },
       en: {
         'user': 'Your message',
@@ -455,6 +490,9 @@ window.__ModuleLoader__.load({
         'wallHint': 'Click a card to jump · Esc closes',
         'pageUp': '↑ {n} earlier',
         'pageDown': '↓ {n} later',
+        'zoomInit': 'Initial view: the range at session open',
+        'zoomMid': 'Medium: half the session',
+        'zoomAll': 'Full: the whole session (loads history)',
       },
     }
 
@@ -522,6 +560,21 @@ window.__ModuleLoader__.load({
       shadeBottom.dataset.edge = 'bottom'
       const lens = doc.createElement('div')
       lens.className = 'dsh-strata-lens'
+      const zoomer = doc.createElement('div')
+      zoomer.className = 'dsh-strata-zoom'
+      const ZOOMS = [
+        { mode: 'init', glyph: '近', title: T.zoomInit },
+        { mode: 'mid', glyph: '中', title: T.zoomMid },
+        { mode: 'all', glyph: '全', title: T.zoomAll },
+      ]
+      for (const z of ZOOMS) {
+        const button = doc.createElement('button')
+        button.type = 'button'
+        button.dataset.zoom = z.mode
+        button.textContent = z.glyph
+        button.title = z.title
+        zoomer.append(button)
+      }
       const loadbar = doc.createElement('div')
       loadbar.className = 'dsh-strata-loadbar'
       const older = doc.createElement('div')
@@ -559,13 +612,26 @@ window.__ModuleLoader__.load({
       wall.append(wallLink, wallHead, wallBody)
       doc.body.appendChild(wall)
       rail.append(canvas, shadeTop, shadeBottom, lens, older, loadbar)
-      root.append(anchorsEl, rail)
+      root.append(anchorsEl, rail, zoomer)
 
       const g = canvas.getContext('2d')
 
       let scroller = null
       let bands = []
       let userBandIndex = []
+      // Map scale: 'all' spans the whole loaded session, 'init' restores the
+      // extent at session open, 'mid' half the session. Zoomed windows slide
+      // with the reading position and are immune to prepend rescaling.
+      const ZOOM_KEY = 'dsh-strata.zoom'
+      let zoomMode = 'all'
+      let initialExtent = 0
+      let initialSession
+      try {
+        const saved = window.localStorage.getItem(ZOOM_KEY)
+        if (saved === 'init' || saved === 'mid' || saved === 'all') zoomMode = saved
+      } catch {
+        // Storage refusal only costs persistence.
+      }
       let anchorCandidates = []
       let anchorEntries = []
       let anchorSignature = ''
@@ -752,6 +818,12 @@ window.__ModuleLoader__.load({
         }
         anchorSignature = ''
         const nextHeight = Math.max(scroller.scrollHeight, 1)
+        // Remember the extent at session open — the 'init' zoom restores it.
+        const sid = getSessionId()
+        if (sid !== initialSession && bands.length > 0) {
+          initialSession = sid
+          initialExtent = nextHeight
+        }
         // Start the rescale morph in the SAME frame the growth lands: waiting
         // for the load poll would paint one hard frame of the end state first.
         if (autoLoadLatched && nextHeight > contentHeight) {
@@ -789,6 +861,7 @@ window.__ModuleLoader__.load({
         anchorsEl.style.height = railH + 'px'
         root.style.width = rootW + 'px'
         root.style.height = railH + 'px'
+        zoomer.style.top = (railH + 6) + 'px'
         root.style.transform = 'translate('
           + Math.round(scrollerRect.right - hostRect.left - rootW - 1) + 'px, '
           + Math.round(top - hostRect.top) + 'px)'
@@ -807,6 +880,7 @@ window.__ModuleLoader__.load({
         for (const index of anchorCandidates) {
           const band = bands[index]
           const y = (band.top - view.offset) * view.k
+          if (y < -6 || y > railH + 6) continue
           if (y - lastY < ANCHOR_MIN_GAP && band.anchorTone === 'user') continue
           kept.push({ index, y, tone: band.anchorTone })
           lastY = y
@@ -859,6 +933,22 @@ window.__ModuleLoader__.load({
        * @returns `offset` in content px and `k` (rail px per content px).
        */
       function viewParams() {
+        // The zoomed display window: a slice of the content, sliding with
+        // the reading position.
+        let extent = contentHeight
+        if (zoomMode === 'init' && initialExtent > 0) {
+          extent = Math.min(contentHeight, initialExtent)
+        } else if (zoomMode === 'mid') {
+          extent = Math.min(contentHeight,
+            Math.max(initialExtent, Math.round(contentHeight * 0.5)))
+        }
+        if (extent < contentHeight && scroller !== null) {
+          const center = scroller.scrollTop + scroller.clientHeight / 2
+          const offset = clamp(center - extent / 2, 0, contentHeight - extent)
+          // Zoomed scales are pinned: a prepend shifts the offset, never the
+          // scale, so no morph applies here.
+          return { offset, k: railH / extent }
+        }
         if (morph !== null) {
           const t = (performance.now() - morph.start) / morph.duration
           if (t >= 1) {
@@ -929,6 +1019,7 @@ window.__ModuleLoader__.load({
             const band = bands[index]
             if ((pass === 0) === isUserKind(band.kind)) continue
             const { y, h: height, spec } = geometryOf(band)
+            if (y + height < -4 || y > railH + 4) continue
             const hovered = index === hoverIndex
             // Hover must not change the band's geometry — a size flick at this
             // scale reads as jitter. Feedback is purely photometric: full
@@ -1756,8 +1847,9 @@ window.__ModuleLoader__.load({
        */
       function scrub(y) {
         releasePin()
-        const ratio = clamp(y / railH, 0, 1)
-        scroller.scrollTop = ratio * contentHeight - scroller.clientHeight / 2
+        const view = viewParams()
+        scroller.scrollTop = view.offset + clamp(y / railH, 0, 1) * (railH / view.k)
+          - scroller.clientHeight / 2
       }
 
       /**
@@ -1834,6 +1926,73 @@ window.__ModuleLoader__.load({
         scroller.scrollBy({ top: event.deltaY })
         event.preventDefault()
       }
+      /** Reflect the active zoom on the switcher buttons. */
+      function paintZoom() {
+        for (const button of zoomer.children) {
+          button.dataset.active = button.dataset.zoom === zoomMode ? '1' : '0'
+        }
+      }
+      paintZoom()
+
+      let zoomLoading = false
+      const onZoomClick = async (event) => {
+        const button = event.target instanceof Element
+          ? event.target.closest('button[data-zoom]')
+          : null
+        if (button === null) return
+        const mode = button.dataset.zoom
+        zoomMode = mode
+        try {
+          window.localStorage.setItem(ZOOM_KEY, mode)
+        } catch {
+          // Persistence only.
+        }
+        paintZoom()
+        canvasSignature = ''
+        anchorSignature = ''
+        schedule()
+        // Full view means the FULL session: pull the rest of the history in
+        // first, with the same rail loading bar the unloaded jump uses.
+        if (mode === 'all' && olderButton !== null && !zoomLoading && !autoLoadLatched) {
+          zoomLoading = true
+          root.dataset.loading = '1'
+          loadbar.style.width = '10%'
+          for (let guard = 0; guard < 60 && olderButton !== null; guard += 1) {
+            if (autoLoadLatched) break
+            autoLoadLatched = true
+            const beforeHeight = scroller.scrollHeight
+            const startedAt = Date.now()
+            olderButton.click()
+            await new Promise((resolve) => {
+              const poll = window.setInterval(() => {
+                if (disposed || scroller.scrollHeight !== beforeHeight
+                  || Date.now() - startedAt > 5000) {
+                  window.clearInterval(poll)
+                  resolve()
+                }
+              }, 150)
+            })
+            if (disposed) return
+            if (scroller.scrollHeight > beforeHeight) startMorph(scroller.scrollHeight - beforeHeight)
+            autoLoadLatched = false
+            structureDirty = true
+            rebuild()
+            lastScrollHeight = scroller.scrollHeight
+            structureDirty = false
+            schedule()
+            loadbar.style.width = Math.min(96, 10 + guard * 18) + '%'
+          }
+          loadbar.style.width = '100%'
+          await new Promise((resolve) => window.setTimeout(resolve, 200))
+          root.dataset.loading = '0'
+          zoomLoading = false
+          window.setTimeout(() => {
+            loadbar.style.width = '0%'
+          }, 300)
+        }
+      }
+      zoomer.addEventListener('click', onZoomClick)
+
       const onKeyDown = (event) => {
         releasePin()
         const page = scroller.clientHeight
@@ -1971,6 +2130,7 @@ window.__ModuleLoader__.load({
         rail.removeEventListener('wheel', onWheel)
         rail.removeEventListener('dblclick', onDoubleClick)
         rail.removeEventListener('keydown', onKeyDown)
+        zoomer.removeEventListener('click', onZoomClick)
           anchorsEl.removeEventListener('click', onAnchorClick)
         anchorsEl.removeEventListener('mouseover', onAnchorOver)
         anchorsEl.removeEventListener('mouseout', onAnchorOut)
