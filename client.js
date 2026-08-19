@@ -242,29 +242,46 @@ window.__ModuleLoader__.load({
   width: 280px;
   box-sizing: border-box;
   display: none;
-  flex-direction: column;
-  gap: 4px;
   pointer-events: auto;
 }
-.dsh-strata-deck[data-show="1"] { display: flex; }
-.dsh-strata-deckedge {
-  flex: none;
+.dsh-strata-deck[data-show="1"] { display: block; }
+/* Bezier connector from the focused card to its anchor dot. */
+.dsh-strata-decklink {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+.dsh-strata-deckchip {
+  position: absolute;
+  right: 8px;
+  z-index: 600;
+  padding: 1px 6px;
+  border-radius: 6px;
+  background: var(--dsw-alias-bg-layer-3, #22242a);
+  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
   color: var(--dsw-alias-label-caption, #81858c);
   font-size: 10px;
   line-height: 14px;
-  text-align: center;
 }
+/* Library-card shingles: absolutely stacked, each collapsed card shows only
+   its top strip, tucked under the neighbour nearer the focus. */
 .dsh-strata-deckcard {
-  flex: none;
+  position: absolute;
+  left: 0;
+  right: 0;
   box-sizing: border-box;
   overflow: hidden;
   padding: 3px 9px;
   border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
   border-radius: 8px;
   background: var(--dsw-alias-bg-layer-3, #22242a);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .28);
   cursor: pointer;
-  transition: border-color .12s ease, opacity .12s ease;
+  transition: border-color .12s ease;
 }
+.dsh-strata-deckcard[data-focus="0"] { height: 26px; }
 .dsh-strata-deckcard[data-focus="1"] {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 65%, transparent);
   box-shadow: 0 4px 14px rgba(0, 0, 0, .22);
@@ -305,7 +322,14 @@ window.__ModuleLoader__.load({
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 1;
 }
-.dsh-strata-deckcard[data-focus="1"] .dsh-strata-deckbody { -webkit-line-clamp: 5; }
+.dsh-strata-deckcard[data-focus="1"] .dsh-strata-deckbody { -webkit-line-clamp: 14; }
+/* Collapsed strip carries an inline snippet after the index. */
+.dsh-strata-decksnip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-secondary, #cfd3d6);
+  font-size: 10.5px;
+}
 @media (prefers-reduced-motion: reduce) {
   .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas, .dsh-strata-card { transition: none; }
 }
@@ -473,6 +497,15 @@ window.__ModuleLoader__.load({
       anchorsEl.style.width = ANCHOR_W + 'px'
       const deck = doc.createElement('div')
       deck.className = 'dsh-strata-deck'
+      const connector = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      connector.setAttribute('class', 'dsh-strata-decklink')
+      const connectorPath = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+      connectorPath.setAttribute('fill', 'none')
+      connectorPath.setAttribute('stroke', 'var(--dsh-strata-user)')
+      connectorPath.setAttribute('stroke-width', '1.5')
+      connectorPath.setAttribute('stroke-opacity', '0.75')
+      connector.append(connectorPath)
+      deck.append(connector)
       rail.append(canvas, shadeTop, shadeBottom, lens, older)
       root.append(anchorsEl, rail, deck, card)
 
@@ -1208,8 +1241,47 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Lay the deck out around the focused card: the focus expands, the rest
-       * compress to slivers, and cards beyond capacity fold into edge counts.
+       * One deck card.
+       * @param prompt - the message.
+       * @param i - full-list index.
+       * @param total - full-list length.
+       * @param loadedStart - first loaded index.
+       * @param focused - whether this is the expanded card.
+       * @returns the element (unpositioned).
+       */
+      function buildCard(prompt, i, total, loadedStart, focused) {
+        const el = doc.createElement('div')
+        el.className = 'dsh-strata-deckcard'
+        el.dataset.deckIndex = String(i)
+        el.dataset.focus = focused ? '1' : '0'
+        el.dataset.loaded = i >= loadedStart ? '1' : '0'
+        const head = doc.createElement('div')
+        head.className = 'dsh-strata-deckhead'
+        const when = prompt.time > 0
+          ? new Date(prompt.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          : ''
+        head.textContent = (i + 1) + '/' + total + (when === '' ? '' : ' · ' + when)
+          + (i < loadedStart ? ' · ' + (deckBusy && focused ? T.loading : T.unloaded) : '')
+        el.append(head)
+        if (focused) {
+          const body = doc.createElement('div')
+          body.className = 'dsh-strata-deckbody'
+          body.textContent = prompt.text === '' ? T.empty : prompt.text
+          el.append(body)
+        } else {
+          const snip = doc.createElement('span')
+          snip.className = 'dsh-strata-decksnip'
+          snip.textContent = prompt.text === '' ? T.empty : prompt.text
+          head.append(snip)
+        }
+        return el
+      }
+
+      /**
+       * Lay the deck out as a library-card stack anchored to the focused
+       * message's dot: the focus card sits beside its anchor (full text when
+       * it fits), the rest shingle away from it showing only their top
+       * strips, and a bezier connector ties card to dot.
        */
       function renderDeck() {
         const prompts = deck._prompts || []
@@ -1222,50 +1294,77 @@ window.__ModuleLoader__.load({
         deck.style.height = railH + 'px'
         const loadedStart = Math.max(0, total - userTotal)
         const focus = clamp(deckFocus, 0, total - 1)
-        // capacity at minimum sliver height
-        const SLIVER = 24
-        const FOCUS_H = 96
-        const capacity = Math.max(3, Math.floor((railH - FOCUS_H) / 26) + 1)
-        let start = 0
-        let end = total
-        if (total > capacity) {
-          start = clamp(focus - Math.floor(capacity / 2), 0, total - capacity)
-          end = start + capacity
+        // The anchor the focus card hugs: its dot when kept, else band top,
+        // else (unloaded prompt) the top of the rail where history extends.
+        const focusUserIdx = focus - loadedStart
+        let anchorY = 4
+        if (focusUserIdx >= 0 && userBandIndex[focusUserIdx] !== undefined) {
+          const bandIdx = userBandIndex[focusUserIdx]
+          const kept = anchorEntries.find((a) => a.index === bandIdx)
+          anchorY = kept !== undefined ? kept.y : geometryOf(bands[bandIdx]).y + 3
         }
         deck.textContent = ''
-        if (start > 0) {
-          const edge = doc.createElement('div')
-          edge.className = 'dsh-strata-deckedge'
-          edge.textContent = T.moreAbove.replace('{n}', String(start))
-          deck.append(edge)
+        deck.append(connector)
+        const focusEl = buildCard(prompts[focus], focus, total, loadedStart, true)
+        focusEl.style.zIndex = '500'
+        deck.append(focusEl)
+        const focusH = Math.min(focusEl.offsetHeight, railH)
+        const PEEK = 20
+        const MIN_PEEK = 10
+        const focusTop = clamp(anchorY - focusH / 2, 0, Math.max(0, railH - focusH))
+        focusEl.style.top = Math.round(focusTop) + 'px'
+        const nAbove = focus
+        const nBelow = total - 1 - focus
+        const spaceAbove = focusTop - 4
+        const spaceBelow = railH - focusTop - focusH - 4
+        const shownAbove = Math.min(nAbove, Math.max(0, Math.floor(spaceAbove / MIN_PEEK)), 16)
+        const shownBelow = Math.min(nBelow, Math.max(0, Math.floor(spaceBelow / MIN_PEEK)), 16)
+        const peekAbove = shownAbove > 0 ? Math.min(PEEK, spaceAbove / shownAbove) : 0
+        const peekBelow = shownBelow > 0 ? Math.min(PEEK, spaceBelow / shownBelow) : 0
+        for (let step = 1; step <= shownAbove; step += 1) {
+          const el = buildCard(prompts[focus - step], focus - step, total, loadedStart, false)
+          el.style.top = Math.round(focusTop - step * peekAbove) + 'px'
+          // Nearer the focus renders on top, so every card shows its top strip.
+          el.style.zIndex = String(400 - step)
+          deck.append(el)
         }
-        for (let i = start; i < end; i += 1) {
-          const prompt = prompts[i]
-          const cardEl = doc.createElement('div')
-          cardEl.className = 'dsh-strata-deckcard'
-          cardEl.dataset.deckIndex = String(i)
-          cardEl.dataset.focus = i === focus ? '1' : '0'
-          cardEl.dataset.loaded = i >= loadedStart ? '1' : '0'
-          cardEl.style.minHeight = (i === focus ? 0 : SLIVER) + 'px'
-          const head = doc.createElement('div')
-          head.className = 'dsh-strata-deckhead'
-          const when = prompt.time > 0
-            ? new Date(prompt.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-            : ''
-          head.textContent = (i + 1) + '/' + total + (when === '' ? '' : ' · ' + when)
-            + (i < loadedStart ? ' · ' + (deckBusy && i === focus ? T.loading : T.unloaded) : '')
-          const body = doc.createElement('div')
-          body.className = 'dsh-strata-deckbody'
-          body.textContent = prompt.text === '' ? T.empty : prompt.text
-          cardEl.append(head, body)
-          deck.append(cardEl)
+        for (let step = 1; step <= shownBelow; step += 1) {
+          const el = buildCard(prompts[focus + step], focus + step, total, loadedStart, false)
+          el.style.top = Math.round(focusTop + focusH + (step - 1) * peekBelow) + 'px'
+          // Farther cards overlay the previous one's tail: top strips again.
+          el.style.zIndex = String(400 + step)
+          deck.append(el)
         }
-        if (end < total) {
-          const edge = doc.createElement('div')
-          edge.className = 'dsh-strata-deckedge'
-          edge.textContent = T.moreBelow.replace('{n}', String(total - end))
-          deck.append(edge)
+        const hiddenAbove = nAbove - shownAbove
+        const hiddenBelow = nBelow - shownBelow
+        if (hiddenAbove > 0) {
+          const chip = doc.createElement('div')
+          chip.className = 'dsh-strata-deckchip'
+          chip.style.top = '2px'
+          chip.textContent = T.moreAbove.replace('{n}', String(hiddenAbove))
+          deck.append(chip)
         }
+        if (hiddenBelow > 0) {
+          const chip = doc.createElement('div')
+          chip.className = 'dsh-strata-deckchip'
+          chip.style.bottom = '2px'
+          chip.textContent = T.moreBelow.replace('{n}', String(hiddenBelow))
+          deck.append(chip)
+        }
+        // Bezier connector: focus card right edge → the anchor dot. The svg
+        // spans the 10px gap plus the anchor column (24px wide).
+        const GAP = 10
+        const svgWidth = GAP + ANCHOR_W
+        const startY = clamp(anchorY, focusTop + 12, focusTop + focusH - 12)
+        const endX = GAP + ANCHOR_W - 6.5
+        const endY = focusUserIdx >= 0 ? anchorY : 4
+        connector.setAttribute('width', String(svgWidth))
+        connector.setAttribute('height', String(railH))
+        connectorPath.setAttribute('d',
+          'M 0 ' + Math.round(startY)
+          + ' C ' + (svgWidth * 0.45) + ' ' + Math.round(startY)
+          + ', ' + (svgWidth * 0.55) + ' ' + Math.round(endY)
+          + ', ' + endX + ' ' + Math.round(endY))
       }
 
       /**

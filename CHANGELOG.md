@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1 — 2026-08-19
+
+Deck layout redesigned around the anchor:
+
+- The focused card now sits beside its anchor dot (clamped to the rail), and
+  shows the message in full when it fits (up to 14 lines).
+- The other cards shingle away from the focus like a library card file —
+  absolutely stacked, each showing only its top strip with index, time and an
+  inline snippet; capacity overflow folds into ↑/↓ count chips.
+- A bezier connector ties the focused card to its anchor dot; an unloaded
+  focus points at the top of the rail where its history would extend.
+
 ## 0.4.0 — 2026-08-19
 
 The prompt deck: hover a user band or its anchor dot and every user message
