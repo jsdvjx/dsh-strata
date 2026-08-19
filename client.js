@@ -276,8 +276,8 @@ window.__ModuleLoader__.load({
    its top strip, tucked under the neighbour nearer the focus. */
 .dsh-strata-deckcard {
   position: absolute;
-  left: 0;
   right: 0;
+  width: 100%;
   box-sizing: border-box;
   overflow: hidden;
   padding: 3px 9px;
@@ -291,7 +291,15 @@ window.__ModuleLoader__.load({
   transition:
     top .26s cubic-bezier(.34, 1.56, .64, 1),
     height .26s cubic-bezier(.34, 1.56, .64, 1),
+    width .26s cubic-bezier(.34, 1.56, .64, 1),
     border-color .12s ease;
+}
+/* The ordinal stands out: bold, accent-coloured, its own element. */
+.dsh-strata-deckno {
+  flex: none;
+  font-weight: 700;
+  font-size: 11.5px;
+  color: var(--dsh-strata-user);
 }
 .dsh-strata-deckcard[data-focus="0"] { padding-top: 2px; padding-bottom: 2px; }
 .dsh-strata-deckcard .dsh-strata-deckbody { display: none; }
@@ -1278,17 +1286,19 @@ window.__ModuleLoader__.load({
           el.style.transition = 'none'
           const head = doc.createElement('div')
           head.className = 'dsh-strata-deckhead'
+          const no = doc.createElement('span')
+          no.className = 'dsh-strata-deckno'
           const headText = doc.createElement('span')
           const snip = doc.createElement('span')
           snip.className = 'dsh-strata-decksnip'
           snip.textContent = prompt.text === '' ? T.empty : prompt.text
-          head.append(headText, snip)
+          head.append(no, headText, snip)
           const body = doc.createElement('div')
           body.className = 'dsh-strata-deckbody'
           body.textContent = prompt.text === '' ? T.empty : prompt.text
           el.append(head, body)
           deck.append(el)
-          cards.push({ el, headText })
+          cards.push({ el, no, headText })
           const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
           path.setAttribute('fill', 'none')
           path.setAttribute('stroke', 'var(--dsh-strata-user)')
@@ -1344,17 +1354,18 @@ window.__ModuleLoader__.load({
         const loadedStart = Math.max(0, total - userTotal)
         const focus = clamp(deckFocus, 0, total - 1)
         for (let i = 0; i < total; i += 1) {
-          const { el, headText } = deckDom.cards[i]
+          const { el, no, headText } = deckDom.cards[i]
           el.dataset.focus = i === focus ? '1' : '0'
           el.dataset.loaded = i >= loadedStart ? '1' : '0'
           const when = prompts[i].time > 0
             ? new Date(prompts[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : ''
-          headText.textContent = (i + 1) + '/' + total + (when === '' ? '' : ' · ' + when)
+          no.textContent = String(i + 1)
+          headText.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
             + (i < loadedStart ? ' · ' + (deckBusy && i === focus ? T.loading : T.unloaded) : '')
         }
         // Window: at most one card per 13px of rail; the rest fold into chips.
-        const maxShown = Math.max(3, Math.floor(railH / 13))
+        const maxShown = Math.max(3, Math.floor(railH / 16))
         let start = 0
         let end = total
         if (total > maxShown) {
@@ -1379,7 +1390,7 @@ window.__ModuleLoader__.load({
           endY: focusTarget,
           focused: true,
         }
-        const baseStrip = Math.round(clamp(stride, 14, 26))
+        focusEl.style.width = '100%'
         // How far the expansion pushes the neighbourhood apart.
         const pushBase = Math.max(0, (focusH - stride) / 2)
         for (let i = 0; i < total; i += 1) {
@@ -1390,8 +1401,11 @@ window.__ModuleLoader__.load({
             continue
           }
           const d = Math.abs(i - focus)
-          // 体积随距离缩小 (dock magnification falloff)…
-          const h = clamp(baseStrip - 3 * (d - 1), 12, baseStrip)
+          // Size falloff: height never dips below one full line of content;
+          // WIDTH carries the depth gradient (right edge stays with the
+          // rail, the left edge recedes with distance).
+          const h = clamp(28 - 2 * d, 22, 26)
+          el.style.width = clamp(102 - 8 * d, 66, 94) + '%'
           // …and so does the parting shove.
           const shove = d === 1 ? 1 : d === 2 ? 0.55 : d === 3 ? 0.3 : 0.15
           const dir = i < focus ? -1 : 1

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.1 — 2026-08-19
+
+Deck gradient tuning.
+
+- Card height never dips below one full line of content (22px floor; the
+  12px minimum crushed the strips).
+- WIDTH now carries the depth gradient: the focus spans the full deck, and
+  neighbours recede 94% → 66% with distance, right edges staying with the
+  rail — a much steeper, clearer falloff than height alone allowed.
+- The ordinal is its own element: bold, accent-blue, instantly scannable.
+- The spring transition covers width as well.
+
 ## 0.5.0 — 2026-08-19
 
 The deck becomes a macOS-dock fisheye.
