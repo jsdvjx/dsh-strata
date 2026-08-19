@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.7.2 — 2026-08-19
+
+- The board is gone: cards float straight over the transcript, which stays
+  readable through the gaps; the title is a compact pill and a click in a
+  gap closes the wall.
+- Hovering a user BAND on the rail now opens the wall too, not just the dot.
+- String rule inverted to match the spotlight: the hovered message hangs by
+  the ONLY solid string; every other card's string is dashed and faint.
+- Fixed the masonry containing block: cards anchored to the outer wall
+  instead of the card area, overlaying the header.
+
 ## 0.7.1 — 2026-08-19
 
 The wall packs like an evidence board.

@@ -243,6 +243,9 @@ window.__ModuleLoader__.load({
    HOVERING a user dot. Cards run in one chronological column (so the bezier
    back to each anchor dot never crosses another card); paging buttons at the
    top and bottom take over when the column cannot fit. */
+/* No board behind the notes: the cards float straight over the transcript,
+   which stays visible through the gaps. The container is a transparent hover
+   region only. */
 .dsh-strata-wall {
   position: fixed;
   top: 14px;
@@ -254,13 +257,6 @@ window.__ModuleLoader__.load({
   display: none;
   flex-direction: column;
   box-sizing: border-box;
-  padding: 10px 14px 12px;
-  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2, #1d1e22) 92%, transparent);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
-  box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
 }
 .dsh-strata-wall[data-show="1"] { display: flex; }
 .dsh-strata-walllink {
@@ -278,7 +274,12 @@ window.__ModuleLoader__.load({
   align-items: baseline;
   gap: 10px;
   flex: none;
-  padding: 2px 2px 8px;
+  align-self: flex-start;
+  margin-bottom: 8px;
+  padding: 4px 11px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
+  border-radius: 9px;
+  background: var(--dsw-alias-bg-layer-3, #22242a);
 }
 .dsh-strata-walltitle {
   color: var(--dsw-alias-label-primary, #e8eaed);
@@ -286,10 +287,9 @@ window.__ModuleLoader__.load({
   font-weight: 600;
 }
 .dsh-strata-wallhint {
-  flex: 1;
+  flex: none;
   color: var(--dsw-alias-label-caption, #81858c);
   font-size: 10.5px;
-  text-align: right;
 }
 .dsh-strata-wallbody {
   flex: 1;
@@ -303,7 +303,7 @@ window.__ModuleLoader__.load({
   padding: 3px 0;
   border: 1px dashed var(--dsw-alias-border-l2, rgba(128, 134, 142, .45));
   border-radius: 8px;
-  background: transparent;
+  background: var(--dsw-alias-bg-layer-3, #22242a);
   color: var(--dsw-alias-label-tertiary, #adb2b8);
   font-size: 11px;
   cursor: pointer;
@@ -565,7 +565,7 @@ window.__ModuleLoader__.load({
       wallPagerTop.type = 'button'
       wallPagerTop.className = 'dsh-strata-wallpager'
       const wallCards = doc.createElement('div')
-      wallCards.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden'
+      wallCards.style.cssText = 'flex:1;position:relative;min-height:0;overflow:hidden'
       const wallPagerBottom = doc.createElement('button')
       wallPagerBottom.type = 'button'
       wallPagerBottom.className = 'dsh-strata-wallpager'
@@ -1501,8 +1501,10 @@ window.__ModuleLoader__.load({
           path.setAttribute('fill', 'none')
           path.setAttribute('stroke', 'var(--dsh-strata-user)')
           path.setAttribute('stroke-width', focused ? '1.5' : '1')
-          path.setAttribute('stroke-opacity', focused ? '0.8' : '0.25')
-          if (!loaded) path.setAttribute('stroke-dasharray', '3 3')
+          path.setAttribute('stroke-opacity', focused ? '0.85' : '0.3')
+          // The spotlight is the ONLY solid string; every other card hangs
+          // by a dashed one.
+          if (!focused) path.setAttribute('stroke-dasharray', '4 4')
           const midX = (startX + endX) / 2
           path.setAttribute('d',
             'M ' + Math.round(startX) + ' ' + Math.round(startY)
@@ -1629,7 +1631,10 @@ window.__ModuleLoader__.load({
         if (i !== -1) {
           event.preventDefault()
           wallJump(i)
+          return
         }
+        // A click in the gaps (the transcript shows through) closes the wall.
+        closeWall()
       }
       const onWallOver = (event) => {
         const i = wallIndexOf(event.target)
@@ -1768,6 +1773,7 @@ window.__ModuleLoader__.load({
         hoverIndex = index
         canvasSignature = ''
         if (index === -1) hideCard()
+        else if (isUserKind(bands[index].kind)) openWall(bands[index].userIndex)
         else showCard(index)
         schedule()
       }
