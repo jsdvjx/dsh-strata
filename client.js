@@ -1398,26 +1398,22 @@ window.__ModuleLoader__.load({
           endY: focusTarget,
           focused: true,
         }
-        const nAbove = focus - start
-        const nBelow = end - 1 - focus
-        const spacingAbove = nAbove > 0 ? focusTop / nAbove : 0
-        const spacingBelow = nBelow > 0 ? (railH - focusTop - focusH) / nBelow : 0
-        for (let i = 0; i < total; i += 1) {
-          if (i === focus) continue
+        // Spacing is itself a gradient with a GUARANTEED selectable zone:
+        // the three strips nearest the focus always get 16px of exposed
+        // strip — climbing moves that bubble along, so the next card is
+        // always hittable no matter how crowded the end of the rail is.
+        // Farther strips compress geometrically (they enter the bubble as
+        // the focus approaches), the stack may overflow the rail by 44px at
+        // either end (it is an overlay), and whatever still does not fit
+        // folds into the count chips.
+        const OVERFLOW = 44
+        const spacingAt = (d) => (d <= 3 ? 16 : Math.max(4, 16 * Math.pow(0.55, d - 3)))
+        let hiddenAbove = start
+        let hiddenBelow = total - end
+        const place = (i, d, top) => {
           const { el } = deckDom.cards[i]
-          if (i < start || i >= end) {
-            el.style.display = 'none'
-            continue
-          }
-          const d = Math.abs(i - focus)
-          // Long-range falloff: width recedes 4%/step down to 60%, height
-          // 1px/step with a one-full-line floor.
           const h = clamp(27 - d, 22, 26)
           const w = clamp(100 - 4 * d, 60, 96)
-          const cardCenter = i < focus
-            ? focusTop - (d - 0.5) * spacingAbove
-            : focusTop + focusH + (d - 0.5) * spacingBelow
-          const top = clamp(cardCenter - h / 2, -6, railH - h + 6)
           el.style.display = ''
           el.style.height = h + 'px'
           el.style.width = w + '%'
@@ -1426,10 +1422,35 @@ window.__ModuleLoader__.load({
           deckDom.centers[i] = top + h / 2
           links[i] = { startY: top + h / 2, endY: deckAnchorYFor(i, loadedStart), focused: false }
         }
-        deckDom.chipTop.style.display = start > 0 ? '' : 'none'
-        deckDom.chipTop.textContent = T.moreAbove.replace('{n}', String(start))
-        deckDom.chipBottom.style.display = end < total ? '' : 'none'
-        deckDom.chipBottom.textContent = T.moreBelow.replace('{n}', String(total - end))
+        const hide = (i) => {
+          deckDom.cards[i].el.style.display = 'none'
+        }
+        let yUp = focusTop
+        for (let i = focus - 1; i >= 0; i -= 1) {
+          const d = focus - i
+          yUp -= spacingAt(d)
+          if (i < start || yUp < -OVERFLOW) {
+            hide(i)
+            if (i >= start) hiddenAbove += 1
+            continue
+          }
+          place(i, d, yUp)
+        }
+        let yDown = focusTop + focusH
+        for (let i = focus + 1; i < total; i += 1) {
+          const d = i - focus
+          if (i >= end || yDown > railH + OVERFLOW - 22) {
+            hide(i)
+            if (i < end) hiddenBelow += 1
+            continue
+          }
+          place(i, d, yDown)
+          yDown += spacingAt(d + 1)
+        }
+        deckDom.chipTop.style.display = hiddenAbove > 0 ? '' : 'none'
+        deckDom.chipTop.textContent = T.moreAbove.replace('{n}', String(hiddenAbove))
+        deckDom.chipBottom.style.display = hiddenBelow > 0 ? '' : 'none'
+        deckDom.chipBottom.textContent = T.moreBelow.replace('{n}', String(hiddenBelow))
         drawDeckLinks(links)
       }
 

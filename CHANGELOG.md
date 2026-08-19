@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.3 — 2026-08-19
+
+Climbing to the ends of the deck can no longer strand the pointer.
+
+- Even distribution divided the shrinking headroom among the remaining
+  strips, so approaching the top squeezed them into an unselectable pile.
+  Spacing is now itself a gradient with a GUARANTEED zone: the three strips
+  nearest the focus always expose 16px — the bubble travels with each
+  climb, so the next card is always hittable — while farther strips
+  compress geometrically (9 → 5 → 4px floor) and re-expand as the focus
+  approaches them.
+- The stack may overflow the rail by 44px at either end (it is an overlay),
+  so the ceiling is no longer a hard wall; whatever still does not fit
+  folds into the count chips, and the wheel remains the precise fallback.
+
 ## 0.5.2 — 2026-08-19
 
 - The focus card hugs its anchor again: hovering a dot centres the card on
