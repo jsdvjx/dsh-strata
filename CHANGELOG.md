@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.5 — 2026-08-19
+
+- The hover stroke is now a true inner stroke: the path is inset by half the
+  line width and clamped to the canvas, and thin bands get a proportionally
+  thinner line. A canvas stroke rides the path, so half of the previous one
+  landed outside the band — swallowing thin bands and bleeding toward
+  neighbours and past the canvas edge.
+
 ## 0.3.4 — 2026-08-19
 
 - Hovering a band now highlights it visibly regardless of its resting

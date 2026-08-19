@@ -787,11 +787,30 @@ window.__ModuleLoader__.load({
               g.shadowBlur = 0
               g.shadowColor = 'transparent'
               // Full-width bands clip the widen and the sideways glow at the
-              // canvas edge, so the unambiguous mark is a bright inner stroke.
-              g.globalAlpha = 0.85
-              g.strokeStyle = '#ffffff'
-              g.lineWidth = 1.5
-              g.stroke()
+              // canvas edge, so the unambiguous mark is a bright INNER stroke.
+              // A canvas stroke rides the path (half of it lands outside), so
+              // the path is inset by half the line width and clamped to the
+              // canvas — nothing bleeds past the band, the canvas edge, or
+              // into a neighbour — and thin bands get a thinner line instead
+              // of being swallowed whole.
+              const lw = clamp(height / 3, 0.75, 1.5)
+              const sx = Math.max(x, 0) + lw / 2
+              const sw = Math.min(x + width, railW) - lw / 2 - sx
+              const sy = Math.max(y, 0) + lw / 2
+              const sh = Math.min(y + height, railH) - lw / 2 - sy
+              if (sw > lw && sh > lw) {
+                g.globalAlpha = 0.85
+                g.strokeStyle = '#ffffff'
+                g.lineWidth = lw
+                g.beginPath()
+                const strokeRadius = Math.max(0, radius - lw / 2)
+                if (typeof g.roundRect === 'function') {
+                  g.roundRect(sx, sy, sw, sh, strokeRadius)
+                } else {
+                  g.rect(sx, sy, sw, sh)
+                }
+                g.stroke()
+              }
             }
           }
         }
