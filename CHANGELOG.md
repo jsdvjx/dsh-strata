@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.3.6 — 2026-08-19
+
+- The hover stroke is gone: even inset and clamped it read as visual noise on
+  the small bands. Hover keeps the widen plus the same-color glow.
+
 ## 0.3.5 — 2026-08-19
 
 - The hover stroke is now a true inner stroke: the path is inset by half the
