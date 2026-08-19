@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.2.1 — 2026-08-19
+
+Fixes two ways an anchor-dot click could die, both worst at the topmost dot:
+
+- Anchor dots are now updated in place instead of being rebuilt wholesale.
+  A streaming turn rescales the map on every delta; replacing the buttons
+  between a press and its release made the browser retarget the click at the
+  container, silently dropping it. The top dot invited exactly that — its
+  position barely moves while everything below it reflows. A position-based
+  fallback also recovers any click whose target dot vanished mid-press.
+- The rail now collapses on leaving the whole root, not the rail: collapsing
+  shifts the dot column 14px, so the old behavior slid the aimed-at dot out
+  from under the pointer while crossing from the rail toward it.
+
 ## 0.2.0 — 2026-08-19
 
 - The rail now sits in the transcript's own scrollbar gutter and suppresses the

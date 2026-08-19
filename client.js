@@ -606,21 +606,33 @@ window.__ModuleLoader__.load({
         const signature = kept.map((a) => a.index + '@' + Math.round(a.y) + a.tone).join(',')
         if (signature === anchorSignature) return
         anchorSignature = signature
-        anchorsEl.textContent = ''
         anchorEntries = kept
-        for (const anchor of kept) {
+        // Update in place, never wholesale. A streaming turn rescales the map
+        // on every delta; replacing the buttons between a press and its
+        // release makes the browser retarget the click at the container — a
+        // silently dead click. The top dot invites exactly that: its position
+        // barely moves while everything below it reflows.
+        const dots = anchorsEl.children
+        while (dots.length > kept.length) anchorsEl.lastElementChild.remove()
+        for (let i = 0; i < kept.length; i += 1) {
+          const anchor = kept[i]
           const band = bands[anchor.index]
-          const dot = doc.createElement('button')
-          dot.type = 'button'
-          dot.className = 'dsh-strata-anchor'
+          let dot = dots[i]
+          if (dot === undefined) {
+            dot = doc.createElement('button')
+            dot.type = 'button'
+            dot.className = 'dsh-strata-anchor'
+            anchorsEl.append(dot)
+          }
           dot.dataset.tone = anchor.tone
           dot.dataset.index = String(anchor.index)
+          delete dot.dataset.active
           dot.style.top = Math.round(anchor.y) + 'px'
           const counted = band.userIndex >= 0 && userTotal > 1
-          dot.title = (T[band.kind] || T.unknown)
+          const label = (T[band.kind] || T.unknown)
             + (counted ? ' ' + (band.userIndex + 1) + '/' + userTotal : '')
-          dot.setAttribute('aria-label', dot.title)
-          anchorsEl.append(dot)
+          dot.title = label
+          dot.setAttribute('aria-label', label)
         }
         activeAnchor = -1
       }
@@ -939,8 +951,28 @@ window.__ModuleLoader__.load({
       }
       // Anchor hover deliberately does NOT expand the rail: the pointer never
       // enters the rail, so its pointerleave would never fire to collapse it.
+      /**
+       * Nearest anchor to a viewport y, for clicks whose target dot vanished
+       * mid-press (the browser then retargets at the container).
+       * @param clientY - click position.
+       * @returns band index, or -1 when nothing is within reach.
+       */
+      const anchorAtY = (clientY) => {
+        const y = clientY - anchorsEl.getBoundingClientRect().top
+        let best = -1
+        let bestDistance = 12
+        for (const anchor of anchorEntries) {
+          const distance = Math.abs(anchor.y - y)
+          if (distance < bestDistance) {
+            bestDistance = distance
+            best = anchor.index
+          }
+        }
+        return best !== -1 && bands[best] !== undefined ? best : -1
+      }
       const onAnchorClick = (event) => {
-        const index = anchorIndexOf(event.target)
+        let index = anchorIndexOf(event.target)
+        if (index === -1) index = anchorAtY(event.clientY)
         if (index === -1) return
         event.preventDefault()
         jumpTo(index)
@@ -969,7 +1001,10 @@ window.__ModuleLoader__.load({
       // scroll the transcript all the same — dead zones read as bugs.
       anchorsEl.addEventListener('wheel', onWheel, { passive: false })
       rail.addEventListener('pointerenter', onEnter)
-      rail.addEventListener('pointerleave', onLeave)
+      // Collapse on leaving the ROOT, not the rail: expansion shifts the dot
+      // column 14px left, so collapsing the moment the pointer crosses from
+      // the rail toward a dot would slide that dot out from under the aim.
+      root.addEventListener('pointerleave', onLeave)
       rail.addEventListener('pointermove', onMove)
       rail.addEventListener('pointerdown', onDown)
       rail.addEventListener('pointerup', onUp)
@@ -996,7 +1031,7 @@ window.__ModuleLoader__.load({
         window.clearInterval(ticker)
         window.removeEventListener('resize', schedule)
         rail.removeEventListener('pointerenter', onEnter)
-        rail.removeEventListener('pointerleave', onLeave)
+        root.removeEventListener('pointerleave', onLeave)
         rail.removeEventListener('pointermove', onMove)
         rail.removeEventListener('pointerdown', onDown)
         rail.removeEventListener('pointerup', onUp)
