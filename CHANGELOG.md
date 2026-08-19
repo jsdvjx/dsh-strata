@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.8.1 — 2026-08-19
+
+Scale switcher polish.
+
+- 近 is the default scale.
+- 中 is now halfway between the initial extent and the full session — the
+  old formula collapsed onto 近 whenever the initial window exceeded half,
+  which made the button feel dead.
+- Switching scales glides over 450ms instead of snapping, and the load
+  progress bar moves on a slow 0.9s ease with asymptotic advancement, so
+  chunked loads read as one continuous pull.
+- The switcher stacks vertically under the rail.
+
 ## 0.8.0 — 2026-08-19
 
 Map scale states, switched from a widget under the rail.

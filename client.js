@@ -310,7 +310,9 @@ window.__ModuleLoader__.load({
   background: var(--dsh-strata-user);
   border-radius: 1px;
   opacity: 0;
-  transition: width .3s ease, opacity .25s ease;
+  /* Slow glide between progress milestones so chunked loads read as one
+     continuous pull, not a stutter. */
+  transition: width .9s cubic-bezier(.25, .6, .3, 1), opacity .25s ease;
 }
 .dsh-strata-root[data-loading="1"] .dsh-strata-loadbar { opacity: 1; }
 .dsh-strata-root[data-loading="1"] .dsh-strata-older {
@@ -329,6 +331,7 @@ window.__ModuleLoader__.load({
   transform: translateX(-50%);
   display: none;
   pointer-events: auto;
+  flex-direction: column;
   gap: 1px;
   padding: 1px;
   border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
@@ -337,8 +340,8 @@ window.__ModuleLoader__.load({
 }
 .dsh-strata-root[data-expanded="1"] .dsh-strata-zoom { display: inline-flex; }
 .dsh-strata-zoom button {
-  width: 18px;
-  height: 16px;
+  width: 19px;
+  height: 17px;
   padding: 0;
   border: 0;
   border-radius: 5px;
@@ -623,7 +626,7 @@ window.__ModuleLoader__.load({
       // extent at session open, 'mid' half the session. Zoomed windows slide
       // with the reading position and are immune to prepend rescaling.
       const ZOOM_KEY = 'dsh-strata.zoom'
-      let zoomMode = 'all'
+      let zoomMode = 'init'
       let initialExtent = 0
       let initialSession
       try {
@@ -932,22 +935,50 @@ window.__ModuleLoader__.load({
        * Current display mapping, morph-aware.
        * @returns `offset` in content px and `k` (rail px per content px).
        */
-      function viewParams() {
-        // The zoomed display window: a slice of the content, sliding with
-        // the reading position.
+      /** Easing state for a zoom-mode switch: from -> current target. */
+      let zoomAnim = null
+
+      /**
+       * The current mode's target display window (no animation applied).
+       * @returns offset and extent in content px.
+       */
+      function targetWindow() {
         let extent = contentHeight
         if (zoomMode === 'init' && initialExtent > 0) {
           extent = Math.min(contentHeight, initialExtent)
         } else if (zoomMode === 'mid') {
-          extent = Math.min(contentHeight,
-            Math.max(initialExtent, Math.round(contentHeight * 0.5)))
+          // Halfway between the initial extent and the full session — always
+          // strictly between 近 and 全 once extra history exists.
+          const base = Math.min(
+            initialExtent > 0 ? initialExtent : contentHeight, contentHeight)
+          extent = Math.min(contentHeight, Math.round((base + contentHeight) / 2))
         }
         if (extent < contentHeight && scroller !== null) {
           const center = scroller.scrollTop + scroller.clientHeight / 2
-          const offset = clamp(center - extent / 2, 0, contentHeight - extent)
+          return { offset: clamp(center - extent / 2, 0, contentHeight - extent), extent }
+        }
+        return { offset: 0, extent: contentHeight }
+      }
+
+      function viewParams() {
+        const target = targetWindow()
+        // A mode switch glides from the old window to the new one.
+        if (zoomAnim !== null) {
+          const t = (performance.now() - zoomAnim.start) / zoomAnim.duration
+          if (t >= 1) {
+            zoomAnim = null
+          } else {
+            const eased = 1 - Math.pow(1 - t, 3)
+            return {
+              offset: zoomAnim.fromOffset + (target.offset - zoomAnim.fromOffset) * eased,
+              k: railH / (zoomAnim.fromExtent + (target.extent - zoomAnim.fromExtent) * eased),
+            }
+          }
+        }
+        if (target.extent < contentHeight) {
           // Zoomed scales are pinned: a prepend shifts the offset, never the
           // scale, so no morph applies here.
-          return { offset, k: railH / extent }
+          return { offset: target.offset, k: railH / target.extent }
         }
         if (morph !== null) {
           const t = (performance.now() - morph.start) / morph.duration
@@ -1186,7 +1217,7 @@ window.__ModuleLoader__.load({
         }
         setVisible(true)
         layout()
-        if (morph !== null) {
+        if (morph !== null || zoomAnim !== null) {
           canvasSignature = ''
           anchorSignature = ''
         }
@@ -1195,7 +1226,11 @@ window.__ModuleLoader__.load({
         paintLens()
         maybeAutoLoadOlder()
         if (wallOpen) updateWallLinks()
-        if (morph !== null) schedule()
+        if (morph !== null || zoomAnim !== null) {
+          canvasSignature = ''
+          anchorSignature = ''
+          schedule()
+        }
       }
 
       /**
@@ -1941,6 +1976,16 @@ window.__ModuleLoader__.load({
           : null
         if (button === null) return
         const mode = button.dataset.zoom
+        if (mode === zoomMode) return
+        if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+          const current = viewParams()
+          zoomAnim = {
+            fromOffset: current.offset,
+            fromExtent: railH / current.k,
+            start: performance.now(),
+            duration: 450,
+          }
+        }
         zoomMode = mode
         try {
           window.localStorage.setItem(ZOOM_KEY, mode)
@@ -1980,7 +2025,7 @@ window.__ModuleLoader__.load({
             lastScrollHeight = scroller.scrollHeight
             structureDirty = false
             schedule()
-            loadbar.style.width = Math.min(96, 10 + guard * 18) + '%'
+            loadbar.style.width = Math.round(100 * (1 - Math.pow(0.7, guard + 2))) + '%'
           }
           loadbar.style.width = '100%'
           await new Promise((resolve) => window.setTimeout(resolve, 200))
