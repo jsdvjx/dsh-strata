@@ -161,6 +161,8 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-interactive-bg-hover, rgba(128, 134, 142, .14));
   pointer-events: none;
 }
+/* Pure indicator, not a control: history above loads by scrolling to the top,
+   so this only has to say "there is more" — visible whenever that is true. */
 .dsh-strata-older {
   position: absolute;
   left: 50%;
@@ -168,25 +170,15 @@ window.__ModuleLoader__.load({
   transform: translateX(-50%);
   display: none;
   width: 22px;
-  height: 13px; /* bottom edge flush with the rail top — no dead gap to cross */
-  padding: 0;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
+  height: 13px;
   color: var(--dsw-alias-label-tertiary, #8b9099);
-  cursor: pointer;
+  opacity: .7;
+  pointer-events: none;
   line-height: 1;
   font-size: 11px;
+  text-align: center;
 }
-/* Forgiving hit halo: a 22x13 target is still small, and the pointer arrives
-   here after a 500px climb — overlap the rail top and the sides. */
-.dsh-strata-older::after {
-  content: "";
-  position: absolute;
-  inset: -7px -9px;
-}
-.dsh-strata-older:hover { color: var(--dsw-alias-label-primary, #1c1e21); }
-.dsh-strata-root[data-expanded="1"] .dsh-strata-older[data-available="1"] { display: block; }
+.dsh-strata-older[data-available="1"] { display: block; }
 .dsh-strata-card {
   position: absolute;
   right: calc(100% + 10px);
@@ -274,7 +266,7 @@ window.__ModuleLoader__.load({
         'compaction': '上下文压缩',
         'manual-compaction': '手动压缩',
         'unknown': '未知事件',
-        'older': '载入更早的历史',
+        'older': '上方还有更早的历史（滚到顶部自动加载）',
         'empty': '（无文本）',
       },
       en: {
@@ -291,7 +283,7 @@ window.__ModuleLoader__.load({
         'compaction': 'Compaction',
         'manual-compaction': 'Manual compaction',
         'unknown': 'Unknown event',
-        'older': 'Load older history',
+        'older': 'Older history above — scroll to the top to load it',
         'empty': '(no text)',
       },
     }
@@ -354,9 +346,9 @@ window.__ModuleLoader__.load({
       canvas.setAttribute('aria-hidden', 'true')
       const lens = doc.createElement('div')
       lens.className = 'dsh-strata-lens'
-      const older = doc.createElement('button')
+      const older = doc.createElement('div')
       older.className = 'dsh-strata-older'
-      older.type = 'button'
+      older.setAttribute('aria-hidden', 'true')
       older.title = T.older
       older.textContent = '⌃'
       const card = doc.createElement('div')
@@ -744,6 +736,38 @@ window.__ModuleLoader__.load({
         if (!next) hideCard()
       }
 
+      let autoLoadLatched = false
+      let lastAutoLoad = 0
+
+      /**
+       * Load older history the moment the reader nears the top — scrolling up
+       * IS the request, no matter how the view got there (wheel, lens drag,
+       * anchor jump, Home). One load in flight at a time; the latch releases
+       * when the content actually grew (DSH anchors the reading position, so
+       * the prepend pushes scrollTop away from the top and the chain pauses
+       * until the reader climbs again — or keeps loading while the lens is
+       * held at the very top).
+       */
+      function maybeAutoLoadOlder() {
+        if (autoLoadLatched || olderButton === null) return
+        if (scroller.scrollTop > scroller.clientHeight * 0.3) return
+        const now = Date.now()
+        if (now - lastAutoLoad < 800) return
+        lastAutoLoad = now
+        autoLoadLatched = true
+        const beforeHeight = scroller.scrollHeight
+        olderButton.click()
+        const poll = window.setInterval(() => {
+          if (disposed || scroller === null || !scroller.isConnected
+            || scroller.scrollHeight !== beforeHeight || Date.now() - now > 5000) {
+            window.clearInterval(poll)
+            autoLoadLatched = false
+            structureDirty = true
+            schedule()
+          }
+        }, 200)
+      }
+
       /** The frame body: rebind, re-measure when dirty, then paint. */
       function paint() {
         frame = 0
@@ -767,6 +791,7 @@ window.__ModuleLoader__.load({
         syncAnchors()
         paintCanvas()
         paintLens()
+        maybeAutoLoadOlder()
       }
 
       /**
@@ -909,8 +934,6 @@ window.__ModuleLoader__.load({
       }
       const onDown = (event) => {
         if (event.button !== 0) return
-        // The older cap owns its own click; a press on it must not scrub.
-        if (event.target instanceof Node && older.contains(event.target)) return
         const y = railY(event)
         const index = bandAt(y)
         if (index === -1) scrub(y)
@@ -954,10 +977,6 @@ window.__ModuleLoader__.load({
         } catch {
           // Storage refusal only costs the preference its persistence.
         }
-      }
-      const onOlder = (event) => {
-        event.stopPropagation()
-        if (olderButton !== null) olderButton.click()
       }
 
       /**
@@ -1034,7 +1053,6 @@ window.__ModuleLoader__.load({
       rail.addEventListener('wheel', onWheel, { passive: false })
       rail.addEventListener('dblclick', onDoubleClick)
       rail.addEventListener('keydown', onKeyDown)
-      older.addEventListener('click', onOlder)
       window.addEventListener('resize', schedule)
 
       if (pinned) {
@@ -1062,8 +1080,7 @@ window.__ModuleLoader__.load({
         rail.removeEventListener('wheel', onWheel)
         rail.removeEventListener('dblclick', onDoubleClick)
         rail.removeEventListener('keydown', onKeyDown)
-        older.removeEventListener('click', onOlder)
-        anchorsEl.removeEventListener('click', onAnchorClick)
+          anchorsEl.removeEventListener('click', onAnchorClick)
         anchorsEl.removeEventListener('mouseover', onAnchorOver)
         anchorsEl.removeEventListener('mouseout', onAnchorOut)
         anchorsEl.removeEventListener('wheel', onWheel)

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0 — 2026-08-19
+
+Discovering older history no longer requires aiming at a tiny button.
+
+- Scrolling (or dragging the lens, or jumping, or pressing Home) to the top
+  of the transcript now auto-loads older history; the map rescales as it
+  arrives, and holding the lens at the very top chain-loads. One load in
+  flight at a time, and DSH's own anchored prepend keeps the reading position.
+- The `⌃` above the rail is now a pure indicator: visible whenever unloaded
+  history remains (no hover needed), gone when everything is loaded, and no
+  longer clickable — there is nothing left to click for.
+
 ## 0.2.2 — 2026-08-19
 
 The ⌃ load-older cap was practically unclickable: it sat 13px above the rail

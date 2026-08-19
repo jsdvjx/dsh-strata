@@ -63,8 +63,9 @@ usually the reason you reached for the map.
 - **Keyboard**: the rail is focusable — arrows nudge, PageUp/PageDown page,
   Home/End jump to the ends (`role=scrollbar` with a live `aria-valuenow`).
 - **Double-click** to pin the rail open (persisted per browser).
-- The **`⌃` cap** appears above the rail while older history is still unloaded; clicking it
-  triggers the transcript's own *load older* and the map extends.
+- Older history loads by itself: scroll (or drag the lens) to the top and the transcript's
+  own *load older* fires, the map rescaling as history arrives. The faint `⌃` above the rail
+  just says *there is more above*; it retires once everything is loaded.
 
 The map hides itself when there is nothing to navigate: no session, a transcript that does
 not scroll, or a non-chat view such as Trajectory.
@@ -109,8 +110,8 @@ disables the transitions.
 ## Limits
 
 - **The map covers the loaded window.** DSH pages older history in on demand; until it is
-  loaded it has no layout to map. The `⌃` cap is the honest signal that more exists, and
-  the fastest way to pull it in.
+  loaded it has no layout to map. The `⌃` indicator is the honest signal that more
+  exists; reaching the top pulls it in automatically.
 - **Chat view only.** The Trajectory tab renders its own event ledger with different
   anchors; the map stands down there rather than guessing.
 - The rail occupies a ~14px strip of the transcript's right padding, so clicks in that
