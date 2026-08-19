@@ -75,7 +75,8 @@ A small **近 / 中 / 全** switcher sits under the rail while it is awake:
 - **近** (initial) restores the view from when the session opened — however
   much history has been loaded since, the map keeps that scale and slides
   with your reading position;
-- **中** (medium) spans half the session;
+- **中** (medium) spans twice the initial view, loading the difference on
+  demand;
 - **全** (full) maps everything — pulling in any unloaded history first,
   with the same rail progress bar the unloaded jump uses.
 

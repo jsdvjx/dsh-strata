@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.2 — 2026-08-19
+
+- 中 responds from a fresh session. Its extent was derived from the loaded
+  content, which equals the initial extent before any history loads — so the
+  button did nothing exactly where users first try it. 中 now means TWICE
+  the initial view, chain-loading the difference on demand with the rail
+  progress bar (capped by the session's actual length).
+
 ## 0.8.1 — 2026-08-19
 
 Scale switcher polish.

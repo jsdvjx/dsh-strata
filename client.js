@@ -468,7 +468,7 @@ window.__ModuleLoader__.load({
         'pageUp': '↑ 更早 {n} 条',
         'pageDown': '↓ 更新 {n} 条',
         'zoomInit': '初始视野：会话打开时的范围',
-        'zoomMid': '中等视野：一半会话',
+        'zoomMid': '中等视野：两倍初始范围（按需补载）',
         'zoomAll': '全景：整个会话（自动补载历史）',
       },
       en: {
@@ -494,7 +494,7 @@ window.__ModuleLoader__.load({
         'pageUp': '↑ {n} earlier',
         'pageDown': '↓ {n} later',
         'zoomInit': 'Initial view: the range at session open',
-        'zoomMid': 'Medium: half the session',
+        'zoomMid': 'Medium: twice the initial range (loads as needed)',
         'zoomAll': 'Full: the whole session (loads history)',
       },
     }
@@ -946,12 +946,10 @@ window.__ModuleLoader__.load({
         let extent = contentHeight
         if (zoomMode === 'init' && initialExtent > 0) {
           extent = Math.min(contentHeight, initialExtent)
-        } else if (zoomMode === 'mid') {
-          // Halfway between the initial extent and the full session — always
-          // strictly between 近 and 全 once extra history exists.
-          const base = Math.min(
-            initialExtent > 0 ? initialExtent : contentHeight, contentHeight)
-          extent = Math.min(contentHeight, Math.round((base + contentHeight) / 2))
+        } else if (zoomMode === 'mid' && initialExtent > 0) {
+          // Twice the initial view — always a full step out from 近, loading
+          // the difference on demand when it is not in the window yet.
+          extent = Math.min(contentHeight, initialExtent * 2)
         }
         if (extent < contentHeight && scroller !== null) {
           const center = scroller.scrollTop + scroller.clientHeight / 2
@@ -1996,13 +1994,17 @@ window.__ModuleLoader__.load({
         canvasSignature = ''
         anchorSignature = ''
         schedule()
-        // Full view means the FULL session: pull the rest of the history in
-        // first, with the same rail loading bar the unloaded jump uses.
-        if (mode === 'all' && olderButton !== null && !zoomLoading && !autoLoadLatched) {
+        // 全 pulls the whole history in; 中 pulls until twice the initial
+        // extent is on hand — both with the rail loading bar.
+        const needMore = () => olderButton !== null
+          && (mode === 'all'
+            || (mode === 'mid' && scroller.scrollHeight < initialExtent * 2))
+        if ((mode === 'all' || mode === 'mid') && needMore()
+          && !zoomLoading && !autoLoadLatched) {
           zoomLoading = true
           root.dataset.loading = '1'
           loadbar.style.width = '10%'
-          for (let guard = 0; guard < 60 && olderButton !== null; guard += 1) {
+          for (let guard = 0; guard < 60 && needMore(); guard += 1) {
             if (autoLoadLatched) break
             autoLoadLatched = true
             const beforeHeight = scroller.scrollHeight
