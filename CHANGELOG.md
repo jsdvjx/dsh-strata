@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3 — 2026-08-19
+
+- The lens gains an accent-blue edge glow — an outer halo spilling past the
+  rail plus a faint inner wash — so the reading position registers even on
+  the 12px resting rail.
+
 ## 0.3.2 — 2026-08-19
 
 - A click-jump near the top no longer stutter-hops through the load chain:

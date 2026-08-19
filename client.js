@@ -158,8 +158,13 @@ window.__ModuleLoader__.load({
   width: 100%;
   box-sizing: border-box;
   border-radius: 5px;
-  border: 1.5px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 70%, transparent);
+  border: 1.5px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 78%, transparent);
   background: transparent;
+  /* Edge glow: an outer halo that spills past the rail plus a faint inner
+     wash, so the lens reads even on the 12px resting rail. */
+  box-shadow:
+    0 0 7px 1px color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 45%, transparent),
+    inset 0 0 5px color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 28%, transparent);
   pointer-events: none;
 }
 /* The classic minimap focus treatment: everything OUTSIDE the viewport dims
