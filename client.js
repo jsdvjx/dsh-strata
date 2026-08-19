@@ -297,53 +297,29 @@ window.__ModuleLoader__.load({
     border-color .12s ease;
 }
 .dsh-strata-wallcard[data-on="1"] { visibility: visible; pointer-events: auto; }
-/* Loading choreography for an unloaded jump: the clicked card pulses and
-   shimmers over a REAL progress bar (chunks of history landed / needed),
-   its string marches toward the rail, and the rest of the collage dims. */
-.dsh-strata-wallprog {
+/* Unloaded-jump loading lives on the RAIL: the wall retires first, then the
+   ⌃ pulses and a thin bar above the rail fills with REAL progress (chunks of
+   history landed over chunks needed) while the map morphs, and finally the
+   glide-and-flash jump plays. */
+.dsh-strata-loadbar {
   position: absolute;
+  top: -4px;
   left: 0;
-  right: 100%;
-  bottom: 0;
   height: 2px;
+  width: 0%;
   background: var(--dsh-strata-user);
+  border-radius: 1px;
   opacity: 0;
-  transition: right .35s ease, opacity .2s ease;
+  transition: width .3s ease, opacity .25s ease;
 }
-.dsh-strata-wallcard[data-busy="1"] { overflow: hidden; }
-.dsh-strata-wallcard[data-busy="1"] .dsh-strata-wallprog { opacity: 1; }
-.dsh-strata-wallcard[data-busy="1"] {
-  animation: dsh-strata-pulse 1.1s ease-in-out infinite;
+.dsh-strata-root[data-loading="1"] .dsh-strata-loadbar { opacity: 1; }
+.dsh-strata-root[data-loading="1"] .dsh-strata-older {
+  color: var(--dsh-strata-user);
+  opacity: 1;
+  animation: dsh-strata-oldpulse .9s ease-in-out infinite;
 }
-.dsh-strata-wallcard[data-busy="1"]::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg,
-    transparent 38%,
-    color-mix(in srgb, var(--dsh-strata-user) 14%, transparent) 50%,
-    transparent 62%);
-  transform: translateX(-100%);
-  animation: dsh-strata-shimmer 1.2s ease-in-out infinite;
-  pointer-events: none;
-}
-.dsh-strata-wall[data-busy="1"] .dsh-strata-wallcard:not([data-busy="1"]) { opacity: .45; }
-.dsh-strata-wallcard { transition-property: top, left, border-color, opacity; }
-.dsh-strata-walllink path[data-march="1"] {
-  animation: dsh-strata-march .5s linear infinite;
-}
-@keyframes dsh-strata-shimmer {
-  to { transform: translateX(100%); }
-}
-@keyframes dsh-strata-pulse {
-  0%, 100% { border-color: color-mix(in srgb, var(--dsh-strata-user) 45%, transparent); }
-  50% {
-    border-color: color-mix(in srgb, var(--dsh-strata-user) 95%, transparent);
-    box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsh-strata-user) 22%, transparent);
-  }
-}
-@keyframes dsh-strata-march {
-  to { stroke-dashoffset: -11; }
+@keyframes dsh-strata-oldpulse {
+  50% { transform: translateX(-50%) scale(1.3); }
 }
 .dsh-strata-wallcard:hover {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 70%, transparent);
@@ -397,9 +373,7 @@ window.__ModuleLoader__.load({
 }
 @media (prefers-reduced-motion: reduce) {
   .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas,
-  .dsh-strata-wallcard { transition: none; animation: none; }
-  .dsh-strata-wallcard[data-busy="1"]::after,
-  .dsh-strata-walllink path[data-march="1"] { animation: none; }
+  .dsh-strata-wallcard, .dsh-strata-older { transition: none; animation: none; }
 }
 `
     const cssTagId = ID + '/minimap.css'
@@ -548,6 +522,8 @@ window.__ModuleLoader__.load({
       shadeBottom.dataset.edge = 'bottom'
       const lens = doc.createElement('div')
       lens.className = 'dsh-strata-lens'
+      const loadbar = doc.createElement('div')
+      loadbar.className = 'dsh-strata-loadbar'
       const older = doc.createElement('div')
       older.className = 'dsh-strata-older'
       older.setAttribute('aria-hidden', 'true')
@@ -582,7 +558,7 @@ window.__ModuleLoader__.load({
       wallBody.append(wallPagerTop, wallCards, wallPagerBottom)
       wall.append(wallLink, wallHead, wallBody)
       doc.body.appendChild(wall)
-      rail.append(canvas, shadeTop, shadeBottom, lens, older)
+      rail.append(canvas, shadeTop, shadeBottom, lens, older, loadbar)
       root.append(anchorsEl, rail)
 
       const g = canvas.getContext('2d')
@@ -1315,12 +1291,10 @@ window.__ModuleLoader__.load({
           const body = doc.createElement('div')
           body.className = 'dsh-strata-wallcardbody'
           body.textContent = prompt.text === '' ? T.empty : prompt.text
-          const prog = doc.createElement('div')
-          prog.className = 'dsh-strata-wallprog'
-          el.append(head, body, prog)
+          el.append(head, body)
           el.style.transition = 'none'
           wallCards.append(el)
-          cards.push({ el, no, meta, prog })
+          cards.push({ el, no, meta })
         }
         wallDom = { prompts, cards }
         wallWin = { a: 0, b: -1 }
@@ -1495,7 +1469,7 @@ window.__ModuleLoader__.load({
             ? new Date(prompts[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : ''
           meta.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
-            + (i < loadedStart ? ' · ' + (wallBusy && i === wallFocusIdx ? T.loading : T.unloaded) : '')
+            + (i < loadedStart ? ' · ' + T.unloaded : '')
         }
         updateWallLinks()
       }
@@ -1536,21 +1510,14 @@ window.__ModuleLoader__.load({
             }
           }
           const focused = i === wallFocusIdx
-          const busyFocus = focused && wallBusy
           const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
           path.setAttribute('fill', 'none')
           path.setAttribute('stroke', 'var(--dsh-strata-user)')
           path.setAttribute('stroke-width', focused ? '1.5' : '1')
           path.setAttribute('stroke-opacity', focused ? '0.85' : '0.3')
-          // The spotlight is the ONLY solid string; every other card hangs by
-          // a dashed one. While its history loads, the spotlight string turns
-          // into marching dashes flowing toward the rail.
-          if (busyFocus) {
-            path.setAttribute('stroke-dasharray', '6 5')
-            path.dataset.march = '1'
-          } else if (!focused) {
-            path.setAttribute('stroke-dasharray', '4 4')
-          }
+          // The spotlight is the ONLY solid string; every other card hangs
+          // by a dashed one.
+          if (!focused) path.setAttribute('stroke-dasharray', '4 4')
           const midX = (startX + endX) / 2
           path.setAttribute('d',
             'M ' + Math.round(startX) + ' ' + Math.round(startY)
@@ -1567,6 +1534,7 @@ window.__ModuleLoader__.load({
        * @param userIdx - index among the loaded user bands.
        */
       function openWall(userIdx) {
+        if (wallBusy) return
         wallOpen = true
         cancelWallClose()
         const spotlight = (prompts) => {
@@ -1631,13 +1599,13 @@ window.__ModuleLoader__.load({
           if (bandIdx !== undefined) jumpTo(bandIdx)
           return
         }
+        // Sequence: the wall retires FIRST, then the rail carries the
+        // loading (pulsing ⌃ + real progress bar + the morphs the chunks
+        // trigger anyway), and only then the glide-and-flash jump plays.
         wallBusy = true
-        wallFocusIdx = i
-        const busyCard = wallDom.cards[i]
-        wall.dataset.busy = '1'
-        busyCard.el.dataset.busy = '1'
-        busyCard.prog.style.right = '92%'
-        restyleWall()
+        closeWall()
+        root.dataset.loading = '1'
+        loadbar.style.width = '6%'
         const startLoaded = loadedStart
         for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
           if (olderButton === null || autoLoadLatched) break
@@ -1666,18 +1634,16 @@ window.__ModuleLoader__.load({
           // Real progress: chunks landed over chunks needed.
           const fraction = clamp(
             (startLoaded - loadedStart) / Math.max(1, startLoaded - i), 0, 1)
-          busyCard.prog.style.right = Math.round((1 - fraction) * 100) + '%'
-          restyleWall()
+          loadbar.style.width = Math.round(6 + fraction * 94) + '%'
         }
-        busyCard.prog.style.right = '0%'
-        // Let the bar land before the wall retires — the jump then carries on.
-        await new Promise((resolve) => window.setTimeout(resolve, 220))
+        loadbar.style.width = '100%'
+        // Let the bar land, then hand the stage to the glide.
+        await new Promise((resolve) => window.setTimeout(resolve, 200))
+        root.dataset.loading = '0'
         wallBusy = false
-        wall.dataset.busy = '0'
-        busyCard.el.dataset.busy = '0'
-        busyCard.prog.style.right = '100%'
-        restyleWall()
-        closeWall()
+        window.setTimeout(() => {
+          loadbar.style.width = '0%'
+        }, 300)
         const bandIdx = userBandIndex[i - loadedStart]
         if (bandIdx !== undefined) jumpTo(bandIdx)
       }

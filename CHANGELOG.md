@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.5 — 2026-08-19
+
+The unloaded-jump sequence is re-staged: close, load, glide.
+
+- Clicking an unloaded card retires the wall IMMEDIATELY; the loading then
+  plays on the rail — the ⌃ pulses in the accent blue and a thin bar above
+  the rail fills with real progress (chunks landed over chunks needed)
+  while the map morphs — and only then the glide-and-flash jump runs.
+- The in-wall loading choreography (card shimmer, dimmed collage, marching
+  string) is removed with the stage it played on; the wall cannot reopen
+  from hover while the load is in flight.
+
 ## 0.7.4 — 2026-08-19
 
 Jumping to an unloaded prompt no longer feels stuck — the wait is staged.
