@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.6.0 — 2026-08-19
+
+The prompt browser is redesigned as the clue wall.
+
+- The hover deck tried to fit "all visible, all selectable, all stable" into
+  a narrow strip beside the rail — geometrically incompatible goals that
+  produced one interaction flaw after another. The wall dissolves the
+  constraint: clicking a user dot opens a full-screen pinboard grid of every
+  prompt in the session (export-fed, unloaded ones included, dashed and
+  tagged), spotlighted on the message you came from.
+- Cards are large, static and scannable; clicking one jumps (chain-loading
+  first when unloaded) and closes the wall; Esc, the backdrop or ✕ close it
+  explicitly — a full-screen surface opened and closed by clicks has no
+  hover traps by construction. Long sessions scroll naturally.
+- Hovering a dot is back to the lightweight single-message preview; every
+  rail behavior (band click-jump, scrub, wheel, keyboard) is unchanged.
+- The fisheye/dock layout engine, spacing regimes and connector fans are
+  all retired.
+
 ## 0.5.4 — 2026-08-19
 
 - The default layout is airy again. 0.5.3 made the guarantee-bubble spacing

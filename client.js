@@ -128,7 +128,7 @@ window.__ModuleLoader__.load({
   inset: -4px -5px;
 }
 /* Hit priority is semantic, not DOM order: a later error dot's halo must not
-   eat the hover on the user dot underneath — the deck opens from user dots. */
+   eat the hover or the click on the user dot underneath — user dots open the wall. */
 .dsh-strata-anchor.dsh-strata-anchor { z-index: 1; }
 .dsh-strata-anchor.dsh-strata-anchor[data-tone="user"] { z-index: 2; }
 .dsh-strata-anchor.dsh-strata-anchor[data-tone="mark"] { z-index: 0; }
@@ -239,91 +239,98 @@ window.__ModuleLoader__.load({
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-/* Prompt deck: every user message in the session, stacked chronologically.
-   The focused card expands; the rest compress to single-line slivers.
-   Interactive, unlike the read-only preview card. */
-.dsh-strata-deck {
-  position: absolute;
-  right: calc(100% + 10px);
-  top: 0;
-  width: 280px;
-  box-sizing: border-box;
+/* Clue wall: every user message in the session, laid out full screen as a
+   pinboard grid. Opened by CLICKING a user dot; closed by Esc, the backdrop,
+   or the close button — explicit both ways, no hover traps. */
+.dsh-strata-wall {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
   display: none;
-  pointer-events: auto;
+  flex-direction: column;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base, #151517) 84%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
 }
-.dsh-strata-deck[data-show="1"] { display: block; }
-/* Bezier connector from the focused card to its anchor dot. */
-.dsh-strata-decklink {
-  position: absolute;
-  left: 100%;
-  top: 0;
-  overflow: visible;
-  pointer-events: none;
-}
-.dsh-strata-deckchip {
-  position: absolute;
-  right: 8px;
-  z-index: 600;
-  padding: 1px 6px;
-  border-radius: 6px;
-  background: var(--dsw-alias-bg-layer-3, #22242a);
-  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
-  color: var(--dsw-alias-label-caption, #81858c);
-  font-size: 10px;
-  line-height: 14px;
-}
-/* Library-card shingles: absolutely stacked, each collapsed card shows only
-   its top strip, tucked under the neighbour nearer the focus. */
-.dsh-strata-deckcard {
-  position: absolute;
-  right: 0;
-  width: 100%;
-  box-sizing: border-box;
-  overflow: hidden;
-  padding: 3px 9px;
-  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
-  border-radius: 8px;
-  background: var(--dsw-alias-bg-layer-3, #22242a);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, .28);
-  cursor: pointer;
-  /* Dock spring: position and size settle with a slight overshoot. The DOM
-     is persistent, so a refocus only moves tops/heights and flips focus. */
-  transition:
-    top .26s cubic-bezier(.34, 1.56, .64, 1),
-    height .26s cubic-bezier(.34, 1.56, .64, 1),
-    width .26s cubic-bezier(.34, 1.56, .64, 1),
-    border-color .12s ease;
-}
-/* The ordinal stands out: bold, accent-coloured, its own element. */
-.dsh-strata-deckno {
+.dsh-strata-wall[data-show="1"] { display: flex; }
+.dsh-strata-wallhead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
   flex: none;
-  font-weight: 700;
-  font-size: 11.5px;
-  color: var(--dsh-strata-user);
+  padding: 16px 26px 8px;
 }
-.dsh-strata-deckcard[data-focus="0"] { padding-top: 2px; padding-bottom: 2px; }
-.dsh-strata-deckcard .dsh-strata-deckbody { display: none; }
-.dsh-strata-deckcard[data-focus="1"] .dsh-strata-deckbody { display: -webkit-box; }
-.dsh-strata-deckcard[data-focus="1"] .dsh-strata-decksnip { display: none; }
-.dsh-strata-deckcard[data-focus="1"] {
-  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 65%, transparent);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, .22);
+.dsh-strata-walltitle {
+  color: var(--dsw-alias-label-primary, #e8eaed);
+  font-size: 14px;
+  font-weight: 600;
 }
-/* Dim the TEXT, not the card: element opacity would let the transcript bleed
-   through the card background. */
-.dsh-strata-deckcard[data-loaded="0"] .dsh-strata-deckbody {
+.dsh-strata-wallhint {
+  flex: 1;
+  color: var(--dsw-alias-label-caption, #81858c);
+  font-size: 11px;
+}
+.dsh-strata-wallclose {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #adb2b8);
+  font-size: 14px;
+  cursor: pointer;
+}
+.dsh-strata-wallclose:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 134, 142, .12));
+  color: var(--dsw-alias-label-primary, #e8eaed);
+}
+.dsh-strata-wallscroll {
+  flex: 1;
+  overflow-y: auto;
+  padding: 8px 26px 30px;
+}
+.dsh-strata-wallgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 12px;
+  align-items: start;
+}
+.dsh-strata-wallcard {
+  box-sizing: border-box;
+  padding: 8px 11px 9px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
+  border-radius: 10px;
+  background: var(--dsw-alias-bg-layer-3, #22242a);
+  cursor: pointer;
+  transition: transform .14s ease, border-color .12s ease, box-shadow .14s ease;
+}
+.dsh-strata-wallcard:hover {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 70%, transparent);
+  transform: translateY(-2px);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
+}
+.dsh-strata-wallcard[data-focus="1"] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 80%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 30%, transparent);
+}
+.dsh-strata-wallcard[data-loaded="0"] { border-style: dashed; }
+.dsh-strata-wallcard[data-loaded="0"] .dsh-strata-wallbody {
   color: var(--dsw-alias-label-tertiary, #adb2b8);
 }
-.dsh-strata-deckhead {
+.dsh-strata-wallcardhead {
   display: flex;
   align-items: center;
   gap: 6px;
+  margin-bottom: 3px;
   color: var(--dsw-alias-label-caption, #81858c);
-  font-size: 10px;
+  font-size: 10.5px;
   line-height: 15px;
   white-space: nowrap;
+  overflow: hidden;
 }
-.dsh-strata-deckhead::before {
+.dsh-strata-wallcardhead::before {
   content: "";
   width: 6px;
   height: 6px;
@@ -331,31 +338,29 @@ window.__ModuleLoader__.load({
   border-radius: 999px;
   background: var(--dsh-strata-user);
 }
-.dsh-strata-deckcard[data-loaded="0"] .dsh-strata-deckhead::before {
+.dsh-strata-wallcard[data-loaded="0"] .dsh-strata-wallcardhead::before {
   background: transparent;
   box-shadow: inset 0 0 0 1.5px var(--dsh-strata-user);
 }
-.dsh-strata-deckbody {
+.dsh-strata-wallno {
+  flex: none;
+  font-weight: 700;
+  font-size: 12px;
+  color: var(--dsh-strata-user);
+}
+.dsh-strata-wallbody {
   color: var(--dsw-alias-label-primary, #e8eaed);
-  font-size: 11.5px;
-  line-height: 16px;
+  font-size: 12px;
+  line-height: 17px;
   overflow: hidden;
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 1;
-}
-.dsh-strata-deckcard[data-focus="1"] .dsh-strata-deckbody { -webkit-line-clamp: 14; }
-/* Collapsed strip carries an inline snippet after the index. */
-.dsh-strata-decksnip {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--dsw-alias-label-secondary, #cfd3d6);
-  font-size: 10.5px;
+  -webkit-line-clamp: 6;
 }
 @media (prefers-reduced-motion: reduce) {
   .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas, .dsh-strata-card,
-  .dsh-strata-deckcard { transition: none; }
+  .dsh-strata-wallcard { transition: none; }
 }
 `
     const cssTagId = ID + '/minimap.css'
@@ -410,8 +415,8 @@ window.__ModuleLoader__.load({
         'empty': '（无文本）',
         'unloaded': '未加载',
         'loading': '载入中…',
-        'moreAbove': '↑ 还有 {n} 条',
-        'moreBelow': '↓ 还有 {n} 条',
+        'wallTitle': '本会话 {n} 条发言',
+        'wallHint': '点击卡片跳转 · Esc 或点击空白关闭',
       },
       en: {
         'user': 'Your message',
@@ -431,8 +436,8 @@ window.__ModuleLoader__.load({
         'empty': '(no text)',
         'unloaded': 'not loaded',
         'loading': 'loading…',
-        'moreAbove': '↑ {n} more',
-        'moreBelow': '↓ {n} more',
+        'wallTitle': '{n} prompts in this session',
+        'wallHint': 'Click a card to jump · Esc or the backdrop closes',
       },
     }
 
@@ -519,13 +524,30 @@ window.__ModuleLoader__.load({
       const anchorsEl = doc.createElement('div')
       anchorsEl.className = 'dsh-strata-anchors'
       anchorsEl.style.width = ANCHOR_W + 'px'
-      const deck = doc.createElement('div')
-      deck.className = 'dsh-strata-deck'
-      const connector = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
-      connector.setAttribute('class', 'dsh-strata-decklink')
-      deck.append(connector)
+      // The clue wall lives on document.body: the root carries a transform,
+      // which would re-anchor position:fixed to itself.
+      const wall = doc.createElement('div')
+      wall.className = 'dsh-strata-wall'
+      const wallHead = doc.createElement('div')
+      wallHead.className = 'dsh-strata-wallhead'
+      const wallTitle = doc.createElement('div')
+      wallTitle.className = 'dsh-strata-walltitle'
+      const wallHint = doc.createElement('div')
+      wallHint.className = 'dsh-strata-wallhint'
+      const wallClose = doc.createElement('button')
+      wallClose.type = 'button'
+      wallClose.className = 'dsh-strata-wallclose'
+      wallClose.textContent = '✕'
+      wallHead.append(wallTitle, wallHint, wallClose)
+      const wallScroll = doc.createElement('div')
+      wallScroll.className = 'dsh-strata-wallscroll'
+      const wallGrid = doc.createElement('div')
+      wallGrid.className = 'dsh-strata-wallgrid'
+      wallScroll.append(wallGrid)
+      wall.append(wallHead, wallScroll)
+      doc.body.appendChild(wall)
       rail.append(canvas, shadeTop, shadeBottom, lens, older)
-      root.append(anchorsEl, rail, deck, card)
+      root.append(anchorsEl, rail, card)
 
       const g = canvas.getContext('2d')
 
@@ -975,7 +997,7 @@ window.__ModuleLoader__.load({
         suppressNativeThumb(next)
         if (!next) {
           hideCard()
-          closeDeck()
+          closeWall()
         }
       }
 
@@ -1072,10 +1094,7 @@ window.__ModuleLoader__.load({
         paintCanvas()
         paintLens()
         maybeAutoLoadOlder()
-        if (morph !== null) {
-          if (deckOpen) layoutDeck()
-          schedule()
-        }
+        if (morph !== null) schedule()
       }
 
       /**
@@ -1140,15 +1159,17 @@ window.__ModuleLoader__.load({
        * Scroll a band into reading position and mark where it landed.
        * @param index - band index.
        */
-      // ── prompt deck: every user message in the session ─────────────────
+      // ── clue wall: every user message, full screen ──────────────────────
       // The loaded window is a contiguous suffix of the append-only log, so
       // the LAST K user events map 1:1 in order onto the K user bands; the
-      // rest are reachable only through the export endpoint.
+      // rest come from the export endpoint. Clicking a user dot opens the
+      // wall; clicking a card jumps (chain-loading first when the message
+      // sits above the loaded window); Esc / backdrop / ✕ close it.
       let promptCache = null
       let promptFetch = null
-      let deckOpen = false
-      let deckFocus = -1
-      let deckBusy = false
+      let wallOpen = false
+      let wallBusy = false
+      let wallDom = null
 
       /**
        * Extract [{seq, time, text}] user prompts from one session-log text.
@@ -1224,7 +1245,7 @@ window.__ModuleLoader__.load({
       /**
        * Cached prompt list for the current session; refetches when the session
        * changed or the loaded window has grown past the cached tail.
-       * @returns prompts, or null when unavailable (deck then shows loaded only).
+       * @returns prompts, or null when unavailable (wall then shows loaded only).
        */
       function ensurePrompts() {
         const sessionId = getSessionId()
@@ -1249,7 +1270,7 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Fallback deck data straight from the loaded bands (export missing).
+       * Fallback wall data straight from the loaded bands (export missing).
        * @returns prompts covering only the loaded window.
        */
       function loadedPrompts() {
@@ -1261,337 +1282,115 @@ window.__ModuleLoader__.load({
         return prompts
       }
 
-      /** Persistent deck DOM: built once per prompt list, reused across
-       *  refocusing — a hover flips data-focus and moves tops, nothing else. */
-      let deckDom = null
-
       /**
-       * Build (or reuse) the card, path and chip elements for one prompt list.
+       * Build (or reuse) the wall grid for one prompt list.
        * @param prompts - the full prompt list.
        */
-      function ensureDeckDom(prompts) {
-        if (deckDom !== null && deckDom.prompts === prompts) return
-        deck.textContent = ''
-        deck.append(connector)
-        connector.textContent = ''
+      function buildWall(prompts) {
+        if (wallDom !== null && wallDom.prompts === prompts) return
+        wallGrid.textContent = ''
         const cards = []
-        const paths = []
         for (let i = 0; i < prompts.length; i += 1) {
           const prompt = prompts[i]
           const el = doc.createElement('div')
-          el.className = 'dsh-strata-deckcard'
-          el.dataset.deckIndex = String(i)
-          el.dataset.focus = '0'
-          // No glide on first placement — only on later shifts.
-          el.style.transition = 'none'
+          el.className = 'dsh-strata-wallcard'
+          el.dataset.wallIndex = String(i)
           const head = doc.createElement('div')
-          head.className = 'dsh-strata-deckhead'
+          head.className = 'dsh-strata-wallcardhead'
           const no = doc.createElement('span')
-          no.className = 'dsh-strata-deckno'
-          const headText = doc.createElement('span')
-          const snip = doc.createElement('span')
-          snip.className = 'dsh-strata-decksnip'
-          snip.textContent = prompt.text === '' ? T.empty : prompt.text
-          head.append(no, headText, snip)
+          no.className = 'dsh-strata-wallno'
+          const meta = doc.createElement('span')
+          head.append(no, meta)
           const body = doc.createElement('div')
-          body.className = 'dsh-strata-deckbody'
+          body.className = 'dsh-strata-wallbody'
           body.textContent = prompt.text === '' ? T.empty : prompt.text
           el.append(head, body)
-          deck.append(el)
-          cards.push({ el, no, headText })
-          const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
-          path.setAttribute('fill', 'none')
-          path.setAttribute('stroke', 'var(--dsh-strata-user)')
-          connector.append(path)
-          paths.push(path)
+          wallGrid.append(el)
+          cards.push({ el, no, meta })
         }
-        const chipTop = doc.createElement('div')
-        chipTop.className = 'dsh-strata-deckchip'
-        chipTop.style.top = '2px'
-        const chipBottom = doc.createElement('div')
-        chipBottom.className = 'dsh-strata-deckchip'
-        chipBottom.style.bottom = '2px'
-        deck.append(chipTop, chipBottom)
-        deckDom = { prompts, cards, paths, chipTop, chipBottom }
-        window.requestAnimationFrame(() => {
-          if (deckDom === null) return
-          for (const card of deckDom.cards) card.el.style.transition = ''
-        })
+        wallDom = { prompts, cards }
       }
 
-      /**
-       * Rail-side target for card i: its anchor dot when loaded, else null
-       * (drawn to the top-right corner where the history extends past the map).
-       * @param i - full-list index.
-       * @param loadedStart - first loaded index.
-       * @returns rail y, or null.
-       */
-      function deckAnchorYFor(i, loadedStart) {
-        const userIdx = i - loadedStart
-        if (userIdx < 0 || userBandIndex[userIdx] === undefined) return null
-        const bandIdx = userBandIndex[userIdx]
-        const kept = anchorEntries.find((a) => a.index === bandIdx)
-        return kept !== undefined ? kept.y : geometryOf(bands[bandIdx]).y + 3
-      }
-
-      /**
-       * macOS-dock layout, anchor-aligned. The focus card centres on the
-       * caller-supplied y — the anchor dot when the hover comes from the
-       * rail, the hovered card's own current centre when it comes from the
-       * deck (so it never slides out from under the pointer). The remaining
-       * cards spread EVENLY over the space above and below the focus — a
-       * fresh distribution every time, so nothing accumulates or drifts —
-       * with size and width tapering over a long distance range.
-       * @param desiredCenter - focus centre in rail px, or undefined to keep
-       *   the focus card where it currently is.
-       */
-      function layoutDeck(desiredCenter) {
-        if (!deckOpen || deckDom === null || deckDom.prompts.length === 0) {
-          deck.dataset.show = '0'
-          return
-        }
-        const prompts = deckDom.prompts
+      /** Refresh per-card loaded/busy states and the wall header. */
+      function refreshWall() {
+        if (wallDom === null) return
+        const prompts = wallDom.prompts
         const total = prompts.length
-        deck.dataset.show = '1'
-        deck.style.height = railH + 'px'
         const loadedStart = Math.max(0, total - userTotal)
-        const focus = clamp(deckFocus, 0, total - 1)
+        wallTitle.textContent = T.wallTitle.replace('{n}', String(total))
+        wallHint.textContent = T.wallHint
         for (let i = 0; i < total; i += 1) {
-          const { el, no, headText } = deckDom.cards[i]
-          el.dataset.focus = i === focus ? '1' : '0'
+          const { el, no, meta } = wallDom.cards[i]
           el.dataset.loaded = i >= loadedStart ? '1' : '0'
+          no.textContent = String(i + 1)
           const when = prompts[i].time > 0
             ? new Date(prompts[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : ''
-          no.textContent = String(i + 1)
-          headText.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
-            + (i < loadedStart ? ' · ' + (deckBusy && i === focus ? T.loading : T.unloaded) : '')
-        }
-        // Window: at most one card per 16px of rail; the rest fold into chips.
-        const maxShown = Math.max(3, Math.floor(railH / 16))
-        let start = 0
-        let end = total
-        if (total > maxShown) {
-          start = clamp(focus - Math.floor(maxShown / 2), 0, total - maxShown)
-          end = start + maxShown
-        }
-        const focusEl = deckDom.cards[focus].el
-        focusEl.style.display = ''
-        focusEl.style.height = ''
-        focusEl.style.width = '100%'
-        focusEl.style.maxHeight = Math.round(Math.min(railH * 0.5, 320)) + 'px'
-        const focusH = Math.min(focusEl.offsetHeight, railH)
-        if (deckDom.centers === undefined) deckDom.centers = []
-        let center = desiredCenter
-        if (center === undefined) {
-          center = deckDom.centers[focus]
-          if (center === undefined) center = ((focus - start) + 0.5) * (railH / (end - start))
-        }
-        const focusTop = clamp(center - focusH / 2, 0, Math.max(0, railH - focusH))
-        focusEl.style.top = Math.round(focusTop) + 'px'
-        focusEl.style.zIndex = '500'
-        deckDom.centers[focus] = focusTop + focusH / 2
-        const focusTarget = deckAnchorYFor(focus, loadedStart)
-        const links = new Array(total).fill(null)
-        links[focus] = {
-          startY: clamp(focusTop + focusH / 2, focusTop + 12, focusTop + focusH - 12),
-          endY: focusTarget,
-          focused: true,
-        }
-        // Spacing is itself a gradient with a GUARANTEED selectable zone:
-        // the three strips nearest the focus always get 16px of exposed
-        // strip — climbing moves that bubble along, so the next card is
-        // always hittable no matter how crowded the end of the rail is.
-        // Farther strips compress geometrically (they enter the bubble as
-        // the focus approaches), the stack may overflow the rail by 44px at
-        // either end (it is an overlay), and whatever still does not fit
-        // folds into the count chips.
-        const OVERFLOW = 44
-        const spacingAt = (d) => (d <= 3 ? 16 : Math.max(4, 16 * Math.pow(0.55, d - 3)))
-        // Two spacing regimes, meeting seamlessly at 16px. With room to
-        // spare, strips spread EVENLY across the whole side — the airy
-        // full-rail look. Only when the even share would drop below the
-        // selectable floor does the side switch to the guarantee bubble
-        // (16px for the nearest three, geometric compression beyond,
-        // borrowing the overflow buffer past the rail edge).
-        const evenAbove = (focus - start) > 0 ? focusTop / (focus - start) : 0
-        const evenBelow = (end - 1 - focus) > 0
-          ? (railH - focusTop - focusH) / (end - 1 - focus)
-          : 0
-        let hiddenAbove = start
-        let hiddenBelow = total - end
-        const place = (i, d, top) => {
-          const { el } = deckDom.cards[i]
-          const h = clamp(27 - d, 22, 26)
-          const w = clamp(100 - 4 * d, 60, 96)
-          el.style.display = ''
-          el.style.height = h + 'px'
-          el.style.width = w + '%'
-          el.style.top = Math.round(top) + 'px'
-          el.style.zIndex = String(i < focus ? 400 - d : 300 + d)
-          deckDom.centers[i] = top + h / 2
-          links[i] = { startY: top + h / 2, endY: deckAnchorYFor(i, loadedStart), focused: false }
-        }
-        const hide = (i) => {
-          deckDom.cards[i].el.style.display = 'none'
-        }
-        let yUp = focusTop
-        for (let i = focus - 1; i >= 0; i -= 1) {
-          const d = focus - i
-          yUp -= evenAbove >= 16 ? evenAbove : spacingAt(d)
-          if (i < start || yUp < -OVERFLOW) {
-            hide(i)
-            if (i >= start) hiddenAbove += 1
-            continue
-          }
-          place(i, d, yUp)
-        }
-        let yDown = focusTop + focusH
-        for (let i = focus + 1; i < total; i += 1) {
-          const d = i - focus
-          if (i >= end || yDown > railH + OVERFLOW - 22) {
-            hide(i)
-            if (i < end) hiddenBelow += 1
-            continue
-          }
-          place(i, d, yDown)
-          yDown += evenBelow >= 16 ? evenBelow : spacingAt(d + 1)
-        }
-        deckDom.chipTop.style.display = hiddenAbove > 0 ? '' : 'none'
-        deckDom.chipTop.textContent = T.moreAbove.replace('{n}', String(hiddenAbove))
-        deckDom.chipBottom.style.display = hiddenBelow > 0 ? '' : 'none'
-        deckDom.chipBottom.textContent = T.moreBelow.replace('{n}', String(hiddenBelow))
-        drawDeckLinks(links)
-      }
-
-      /**
-       * Update the connector paths in place: focus strong, rest faint,
-       * unloaded dashed and converging on the top-right corner.
-       * @param links - per-card {startY, endY, focused} or null (no line).
-       */
-      function drawDeckLinks(links) {
-        const GAP = 10
-        const svgWidth = GAP + ANCHOR_W
-        const endX = GAP + ANCHOR_W - 6.5
-        connector.setAttribute('width', String(svgWidth))
-        connector.setAttribute('height', String(railH))
-        for (let i = 0; i < links.length; i += 1) {
-          const path = deckDom.paths[i]
-          const link = links[i]
-          if (link === null) {
-            path.setAttribute('d', '')
-            continue
-          }
-          const loaded = link.endY !== null
-          const endY = loaded ? link.endY : 2
-          path.setAttribute('stroke-width', link.focused ? '1.5' : '1')
-          path.setAttribute('stroke-opacity', link.focused ? '0.75' : '0.3')
-          if (loaded) path.removeAttribute('stroke-dasharray')
-          else path.setAttribute('stroke-dasharray', '3 3')
-          path.setAttribute('d',
-            'M 0 ' + Math.round(link.startY)
-            + ' C ' + (svgWidth * 0.45) + ' ' + Math.round(link.startY)
-            + ', ' + (svgWidth * 0.55) + ' ' + Math.round(endY)
-            + ', ' + endX + ' ' + Math.round(endY))
+          meta.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
+            + (i < loadedStart ? ' · ' + (wallBusy && el.dataset.focus === '1' ? T.loading : T.unloaded) : '')
         }
       }
 
       /**
-       * Open (or refocus) the deck on one user message.
-       * @param userIdx - index among the LOADED user bands (tail-aligned).
-       */
-      /**
-       * The rail-side y the deck should hug for one LOADED user message —
-       * its kept anchor dot when present, else the band itself.
+       * Open the wall, spotlighting one LOADED user message.
        * @param userIdx - index among the loaded user bands.
-       * @returns rail y, or undefined when unresolvable.
        */
-      function anchorCenterOfUser(userIdx) {
-        const bandIdx = userBandIndex[userIdx]
-        if (bandIdx === undefined) return undefined
-        const kept = anchorEntries.find((a) => a.index === bandIdx)
-        return kept !== undefined ? kept.y : geometryOf(bands[bandIdx]).y + 3
-      }
-
-      function openDeck(userIdx) {
-        deckOpen = true
+      function openWall(userIdx) {
+        wallOpen = true
         hideCard()
-        if (promptCache !== null && deckDom !== null
-          && promptCache.prompts === deckDom.prompts
-          && deckDom.prompts.length >= userTotal) {
-          deckFocus = Math.max(0, deckDom.prompts.length - userTotal) + userIdx
-          layoutDeck(anchorCenterOfUser(userIdx))
+        const spotlight = (prompts) => {
+          buildWall(prompts)
+          refreshWall()
+          wall.dataset.show = '1'
+          const focusIdx = Math.max(0, prompts.length - userTotal) + userIdx
+          for (const { el } of wallDom.cards) el.dataset.focus = '0'
+          const target = wallDom.cards[clamp(focusIdx, 0, prompts.length - 1)]
+          if (target !== undefined) {
+            target.el.dataset.focus = '1'
+            target.el.scrollIntoView({ block: 'center' })
+          }
+        }
+        if (promptCache !== null && wallDom !== null
+          && promptCache.prompts === wallDom.prompts
+          && wallDom.prompts.length >= userTotal) {
+          spotlight(wallDom.prompts)
           return
         }
-        const seed = loadedPrompts()
-        ensureDeckDom(seed)
-        deckFocus = Math.max(0, seed.length - userTotal) + userIdx
-        layoutDeck(anchorCenterOfUser(userIdx))
+        spotlight(loadedPrompts())
         ensurePrompts().then((prompts) => {
-          if (!deckOpen || prompts === null) return
-          if (deckDom !== null && deckDom.prompts === prompts) return
-          mergePrompts(prompts)
+          if (!wallOpen || prompts === null) return
+          if (wallDom !== null && wallDom.prompts === prompts) return
+          spotlight(prompts)
         })
       }
 
-      /**
-       * Swap a fresh prompt list into the OPEN deck without yanking it from
-       * under the pointer: the focused message stays focused (matched by seq,
-       * else by distance from the tail), and a pinned session gets a new
-       * compact frame anchored at the old focus position — new cards join
-       * the stack above, nothing moves under the cursor.
-       * @param prompts - the full prompt list from the export.
-       */
-      function mergePrompts(prompts) {
-        const oldDom = deckDom
-        if (oldDom === null) {
-          ensureDeckDom(prompts)
-          deckFocus = clamp(deckFocus, 0, prompts.length - 1)
-          layoutDeck()
-          return
-        }
-        const oldPrompts = oldDom.prompts
-        const oldFocus = clamp(deckFocus, 0, Math.max(0, oldPrompts.length - 1))
-        const oldFocusEl = oldDom.cards[oldFocus]
-        const oldFocusCenter = oldFocusEl === undefined
-          ? 40
-          : (parseFloat(oldFocusEl.el.style.top) || 0) + oldFocusEl.el.offsetHeight / 2
-        const focused = oldPrompts[oldFocus]
-        ensureDeckDom(prompts)
-        let next = -1
-        if (focused !== undefined && focused.seq >= 0) {
-          next = prompts.findIndex((p) => p.seq === focused.seq)
-        }
-        if (next === -1 && focused !== undefined) {
-          next = prompts.length - (oldPrompts.length - oldFocus)
-        }
-        deckFocus = clamp(next, 0, prompts.length - 1)
-        layoutDeck(oldFocusCenter)
-      }
-
-      /** Retract the deck. */
-      function closeDeck() {
-        if (!deckOpen) return
-        deckOpen = false
-        deck.dataset.show = '0'
+      /** Close the wall. */
+      function closeWall() {
+        if (!wallOpen) return
+        wallOpen = false
+        wall.dataset.show = '0'
       }
 
       /**
-       * Jump to deck entry i, chain-loading older history first when the
-       * entry sits above the loaded window.
+       * Jump to wall entry i, chain-loading older history first when the
+       * entry sits above the loaded window, then close the wall.
        * @param i - index into the full prompt list.
        */
-      async function deckJump(i) {
-        const prompts = deckDom === null ? [] : deckDom.prompts
-        if (prompts[i] === undefined || deckBusy) return
+      async function wallJump(i) {
+        if (wallDom === null || wallBusy) return
+        const prompts = wallDom.prompts
+        if (prompts[i] === undefined) return
         let loadedStart = Math.max(0, prompts.length - userTotal)
         if (i >= loadedStart) {
           const bandIdx = userBandIndex[i - loadedStart]
+          closeWall()
           if (bandIdx !== undefined) jumpTo(bandIdx)
           return
         }
-        deckBusy = true
-        layoutDeck()
+        wallBusy = true
+        for (const { el } of wallDom.cards) el.dataset.focus = '0'
+        wallDom.cards[i].el.dataset.focus = '1'
+        refreshWall()
         for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
           if (olderButton === null || autoLoadLatched) break
           autoLoadLatched = true
@@ -1617,40 +1416,37 @@ window.__ModuleLoader__.load({
           schedule()
           loadedStart = Math.max(0, prompts.length - userTotal)
         }
-        deckBusy = false
-        layoutDeck()
+        wallBusy = false
+        refreshWall()
+        closeWall()
         const bandIdx = userBandIndex[i - loadedStart]
         if (bandIdx !== undefined) jumpTo(bandIdx)
       }
 
-      const deckIndexOf = (target) => {
-        const el = target instanceof Element ? target.closest('.dsh-strata-deckcard') : null
+      const wallIndexOf = (target) => {
+        const el = target instanceof Element ? target.closest('.dsh-strata-wallcard') : null
         if (el === null) return -1
-        const parsed = Number(el.dataset.deckIndex)
+        const parsed = Number(el.dataset.wallIndex)
         return Number.isInteger(parsed) ? parsed : -1
       }
-      const onDeckOver = (event) => {
-        const i = deckIndexOf(event.target)
-        if (i === -1 || i === deckFocus) return
-        deckFocus = i
-        layoutDeck()
+      const onWallClick = (event) => {
+        const i = wallIndexOf(event.target)
+        if (i !== -1) {
+          event.preventDefault()
+          wallJump(i)
+          return
+        }
+        // Backdrop, header gap, or the ✕: anything that is not a card closes.
+        if (event.target === wallClose || !wallHead.contains(event.target)) closeWall()
       }
-      const onDeckClick = (event) => {
-        const i = deckIndexOf(event.target)
-        if (i === -1) return
-        event.preventDefault()
-        deckJump(i)
+      const onWallKey = (event) => {
+        if (event.key === 'Escape' && wallOpen) {
+          event.stopPropagation()
+          closeWall()
+        }
       }
-      const onDeckWheel = (event) => {
-        event.preventDefault()
-        const total = deckDom === null ? 0 : deckDom.prompts.length
-        if (total === 0) return
-        deckFocus = clamp(deckFocus + (event.deltaY > 0 ? 1 : -1), 0, total - 1)
-        layoutDeck()
-      }
-      deck.addEventListener('mouseover', onDeckOver)
-      deck.addEventListener('click', onDeckClick)
-      deck.addEventListener('wheel', onDeckWheel, { passive: false })
+      wall.addEventListener('click', onWallClick)
+      doc.addEventListener('keydown', onWallKey, true)
 
       /**
        * Break the chat view's follow-the-end ownership before an upward
@@ -1740,7 +1536,6 @@ window.__ModuleLoader__.load({
           root.dataset.expanded = pinned ? '1' : '0'
           hoverIndex = -1
           hideCard()
-          closeDeck()
           canvasSignature = ''
           schedule()
         }, 300)
@@ -1754,15 +1549,8 @@ window.__ModuleLoader__.load({
         if (index === hoverIndex) return
         hoverIndex = index
         canvasSignature = ''
-        if (index === -1) {
-          hideCard()
-          closeDeck()
-        } else if (isUserKind(bands[index].kind)) {
-          openDeck(bands[index].userIndex)
-        } else {
-          closeDeck()
-          showCard(index)
-        }
+        if (index === -1) hideCard()
+        else showCard(index)
         schedule()
       }
       const onDown = (event) => {
@@ -1852,7 +1640,10 @@ window.__ModuleLoader__.load({
         if (index === -1) index = anchorAtY(event.clientY)
         if (index === -1) return
         event.preventDefault()
-        jumpTo(index)
+        // A user dot opens the clue wall; other anchors jump directly (the
+        // rail bands themselves also still jump on click).
+        if (isUserKind(bands[index].kind)) openWall(bands[index].userIndex)
+        else jumpTo(index)
       }
       const onAnchorOver = (event) => {
         const index = anchorIndexOf(event.target)
@@ -1860,11 +1651,7 @@ window.__ModuleLoader__.load({
         // Light the mapped band too, so the dot and its stratum read as one.
         hoverIndex = index
         canvasSignature = ''
-        if (isUserKind(bands[index].kind)) openDeck(bands[index].userIndex)
-        else {
-          closeDeck()
-          showCard(index)
-        }
+        showCard(index)
         schedule()
       }
       const onAnchorOut = (event) => {
@@ -1886,10 +1673,9 @@ window.__ModuleLoader__.load({
       // column 14px left, so collapsing the moment the pointer crosses from
       // the rail toward a dot would slide that dot out from under the aim.
       root.addEventListener('pointerleave', onLeave)
-      // Re-entering ANY part of the surface — rail, dots, or the deck across
-      // its 10px gap — cancels a pending collapse. The cancel used to live on
-      // the rail alone, so crossing to the deck raced the grace timer and the
-      // deck vanished under the pointer.
+      // Re-entering ANY part of the surface cancels a pending collapse, so
+      // crossing between the rail and the dot column never races the grace
+      // timer.
       root.addEventListener('pointerenter', cancelCollapse)
       rail.addEventListener('pointermove', onMove)
       rail.addEventListener('pointerdown', onDown)
@@ -1940,10 +1726,9 @@ window.__ModuleLoader__.load({
         resizeObserver.disconnect()
         flowObserver.disconnect()
         themeObserver.disconnect()
-        deck.removeEventListener('mouseover', onDeckOver)
-        deck.removeEventListener('click', onDeckClick)
-        deck.removeEventListener('wheel', onDeckWheel)
-        deck.remove()
+        wall.removeEventListener('click', onWallClick)
+        doc.removeEventListener('keydown', onWallKey, true)
+        wall.remove()
         anchorsEl.remove()
         rail.remove()
         card.remove()

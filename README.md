@@ -52,15 +52,17 @@ you are reading stays enlarged, so the anchors double as a position indicator. A
 would collide collapse to keep the column readable; failures never collapse, since they are
 usually the reason you reached for the map.
 
-## The prompt deck
+## The clue wall
 
-Hovering a **user band or its anchor dot** opens a stacked deck of **every user
-message in the session — including the ones above the loaded window**, read
-from the session's own export log. The hovered card expands to a multi-line
-preview; the rest compress to one-line slivers with timestamps. Unloaded
-prompts show a hollow dot and a *not loaded* tag. **Wheel** steps the focus
-through the deck; **click** jumps to that message — an unloaded one
-chain-loads the missing history first, then lands on it.
+**Clicking a user anchor dot** opens the clue wall: a full-screen pinboard of
+**every user message in the session — including the ones above the loaded
+window**, read from the session's own export log. Cards sit on a responsive
+grid in chronological order, each with a bold ordinal, a timestamp and a
+multi-line preview; unloaded prompts get a dashed border and a *not loaded*
+tag, and the message you came from is spotlighted and scrolled into view.
+**Click a card** to jump to that message — an unloaded one chain-loads the
+missing history first, then lands on it. **Esc**, the backdrop, or ✕ closes.
+Hovering a dot still shows the lightweight single-message preview.
 
 ## Use
 
