@@ -1251,17 +1251,41 @@ window.__ModuleLoader__.load({
       let pinnedFrozen = null
       let deckPrevFocus = -1
 
-      /** Capture every card's current position as the pinned session's frozen frame. */
-      function snapshotPinned() {
-        if (deckDom === null) {
-          pinnedFrozen = null
-          return
+      /**
+       * Build a COMPACT frozen frame for the pinned session: every card gets
+       * a uniform strip slot, the focus slot at the given top. Unlike a raw
+       * snapshot, no slot reserves the expanded height — so when the focus
+       * moves away and its card collapses, it collapses exactly into its
+       * slot and leaves no hole in the middle of the stack.
+       * @param focusIdx - the card whose slot anchors the frame.
+       * @param focusTop - that slot's top (kept under the pointer).
+       * @returns the frame, or null without a deck.
+       */
+      function buildCompactFrame(focusIdx, focusTop) {
+        if (deckDom === null) return null
+        const total = deckDom.prompts.length
+        const PEEK = 20
+        const MIN_PEEK = 10
+        const nAbove = focusIdx
+        const nBelow = total - 1 - focusIdx
+        const spaceAbove = focusTop - 4
+        const spaceBelow = railH - focusTop - 26 - 4
+        const shownAbove = Math.min(nAbove, Math.max(0, Math.floor(spaceAbove / MIN_PEEK)), 16)
+        const shownBelow = Math.min(nBelow, Math.max(0, Math.floor(spaceBelow / MIN_PEEK)), 16)
+        const peekAbove = shownAbove > 0 ? Math.min(PEEK, spaceAbove / shownAbove) : 0
+        const peekBelow = shownBelow > 0 ? Math.min(PEEK, spaceBelow / shownBelow) : 0
+        const frame = new Array(total)
+        for (let i = 0; i < total; i += 1) {
+          const step = Math.abs(i - focusIdx)
+          if (i === focusIdx) {
+            frame[i] = { top: focusTop, shown: true, wasFocus: true }
+          } else if (i < focusIdx) {
+            frame[i] = { top: focusTop - step * peekAbove, shown: step <= shownAbove, wasFocus: false }
+          } else {
+            frame[i] = { top: focusTop + 26 + (step - 1) * peekBelow, shown: step <= shownBelow, wasFocus: false }
+          }
         }
-        pinnedFrozen = deckDom.cards.map(({ el }) => ({
-          top: parseFloat(el.style.top) || 0,
-          shown: el.style.display !== 'none',
-          wasFocus: el.dataset.focus === '1',
-        }))
+        return frame
       }
 
       /**
@@ -1504,22 +1528,56 @@ window.__ModuleLoader__.load({
       function openDeck(userIdx) {
         deckOpen = true
         hideCard()
-        const align = (prompts) => {
-          ensureDeckDom(prompts)
-          deckFocus = Math.max(0, prompts.length - userTotal) + userIdx
-          layoutDeck()
-        }
         if (promptCache !== null && deckDom !== null
           && promptCache.prompts === deckDom.prompts
           && deckDom.prompts.length >= userTotal) {
-          align(deckDom.prompts)
+          deckFocus = Math.max(0, deckDom.prompts.length - userTotal) + userIdx
+          layoutDeck()
           return
         }
-        align(loadedPrompts())
+        const seed = loadedPrompts()
+        ensureDeckDom(seed)
+        deckFocus = Math.max(0, seed.length - userTotal) + userIdx
+        layoutDeck()
         ensurePrompts().then((prompts) => {
           if (!deckOpen || prompts === null) return
-          align(prompts)
+          if (deckDom !== null && deckDom.prompts === prompts) return
+          mergePrompts(prompts)
         })
+      }
+
+      /**
+       * Swap a fresh prompt list into the OPEN deck without yanking it from
+       * under the pointer: the focused message stays focused (matched by seq,
+       * else by distance from the tail), and a pinned session gets a new
+       * compact frame anchored at the old focus position — new cards join
+       * the stack above, nothing moves under the cursor.
+       * @param prompts - the full prompt list from the export.
+       */
+      function mergePrompts(prompts) {
+        const oldDom = deckDom
+        if (oldDom === null) {
+          ensureDeckDom(prompts)
+          deckFocus = clamp(deckFocus, 0, prompts.length - 1)
+          layoutDeck()
+          return
+        }
+        const oldPrompts = oldDom.prompts
+        const oldFocus = clamp(deckFocus, 0, Math.max(0, oldPrompts.length - 1))
+        const oldFocusEl = oldDom.cards[oldFocus]
+        const oldFocusTop = oldFocusEl === undefined ? 40 : parseFloat(oldFocusEl.el.style.top) || 40
+        const focused = oldPrompts[oldFocus]
+        ensureDeckDom(prompts)
+        let next = -1
+        if (focused !== undefined && focused.seq >= 0) {
+          next = prompts.findIndex((p) => p.seq === focused.seq)
+        }
+        if (next === -1 && focused !== undefined) {
+          next = prompts.length - (oldPrompts.length - oldFocus)
+        }
+        deckFocus = clamp(next, 0, prompts.length - 1)
+        if (deckPinned) pinnedFrozen = buildCompactFrame(deckFocus, oldFocusTop)
+        layoutDeck()
       }
 
       /** Retract the deck. */
@@ -1612,7 +1670,12 @@ window.__ModuleLoader__.load({
         // first move look downward and the overlay expanded upward, burying
         // the strips the pointer was climbing toward).
         deckPrevFocus = deckFocus
-        snapshotPinned()
+        if (deckDom !== null) {
+          const focusEl = deckDom.cards[clamp(deckFocus, 0, deckDom.prompts.length - 1)]
+          const top = focusEl === undefined ? 40 : parseFloat(focusEl.el.style.top) || 40
+          pinnedFrozen = buildCompactFrame(clamp(deckFocus, 0, deckDom.prompts.length - 1), top)
+          layoutDeck()
+        }
         cancelCollapse()
       }
       const onDeckLeave = () => {

@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.4.6 — 2026-08-19
+
+- No more hole in the middle of a pinned stack. The pinned frame used to be a
+  raw snapshot of the anchored layout, which reserved the entry focus's full
+  expanded height — refocusing away collapsed the card and left a ~70px gap
+  in its place, forever. Entering the deck now builds a COMPACT frame (every
+  card a uniform strip slot; the expanded card is only an overlay), so a
+  collapsing focus lands exactly in its slot.
+- Fresh prompt lists merge into the OPEN deck dynamically: when the export
+  fetch lands (or a reopen finds new messages), the focused card keeps its
+  position to the pixel — matched by seq, else by tail distance — and a
+  pinned session gets a new compact frame anchored at the old focus top,
+  with the new cards joining above.
+
 ## 0.4.5 — 2026-08-19
 
 Pinned-mode layout rebuilt around a frozen frame — climbing the deck no
