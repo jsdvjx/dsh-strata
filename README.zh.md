@@ -11,7 +11,7 @@
 一眼就能看出这次跑动的形状：你在哪儿说了话、每一轮花了多少工作量、哪里出了问题。
 
 <p align="center">
-  <img src="docs/demo.gif" alt="实录演示：悬停展开轨道并弹出预览卡，点击色块或锚点跳转，拖动视口框刮擦整段会话" width="840">
+  <img src="https://raw.githubusercontent.com/jsdvjx/dsh-strata/main/docs/demo.gif" alt="实录演示：悬停展开轨道并弹出预览卡，点击色块或锚点跳转，拖动视口框刮擦整段会话" width="840">
 </p>
 
 ## 图上画了什么

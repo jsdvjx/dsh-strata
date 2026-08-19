@@ -17,7 +17,7 @@ is the shape of the run at a glance: where you spoke, how much work each prompt 
 where it went wrong.
 
 <p align="center">
-  <img src="docs/demo.gif" alt="Live demo: hovering expands the rail with a preview card, clicking a band or an anchor dot jumps, dragging the lens scrubs the whole session" width="840">
+  <img src="https://raw.githubusercontent.com/jsdvjx/dsh-strata/main/docs/demo.gif" alt="Live demo: hovering expands the rail with a preview card, clicking a band or an anchor dot jumps, dragging the lens scrubs the whole session" width="840">
 </p>
 
 ## What the map shows
