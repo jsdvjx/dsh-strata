@@ -994,9 +994,28 @@ window.__ModuleLoader__.load({
        * Scroll a band into reading position and mark where it landed.
        * @param index - band index.
        */
+      /**
+       * Break the chat view's follow-the-end ownership before an upward
+       * glide. Its pinned zone is the last 24px: a smooth scroll eases out of
+       * the floor so slowly that its first frames stay inside the zone, and
+       * any column resize there (constant while a freshly opened session
+       * settles) re-pins to the floor and kills the animation — the click
+       * looks dead. An instant hop past the zone reads as reader input in the
+       * view's scroll ledger and releases the pin before the glide starts.
+       * @param target - glide destination in content px.
+       */
+      function escapeFollow(target) {
+        const floor = scroller.scrollHeight - scroller.clientHeight
+        if (target >= floor - 24) return
+        if (floor - scroller.scrollTop <= 26) {
+          scroller.scrollTop = Math.max(0, floor - 64)
+        }
+      }
+
       function jumpTo(index) {
         const band = bands[index]
         const target = Math.max(0, band.top - scroller.clientHeight * 0.12)
+        escapeFollow(target)
         // Hold auto-load until the glide lands; smooth-scroll time grows with
         // distance, so the hold does too (long glides took >1s in practice).
         const distance = Math.abs(target - scroller.scrollTop)
@@ -1106,8 +1125,10 @@ window.__ModuleLoader__.load({
           PageDown: page * 0.85,
         }
         if (event.key in steps) {
+          if (steps[event.key] < 0) escapeFollow(scroller.scrollTop + steps[event.key])
           scroller.scrollBy({ top: steps[event.key], behavior: 'smooth' })
         } else if (event.key === 'Home') {
+          escapeFollow(0)
           scroller.scrollTo({ top: 0, behavior: 'smooth' })
         } else if (event.key === 'End') {
           scroller.scrollTo({ top: contentHeight, behavior: 'smooth' })

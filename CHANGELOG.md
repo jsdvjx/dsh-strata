@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.8 — 2026-08-19
+
+- Clicks made right after a session opens no longer die. The chat view pins
+  itself to the floor and re-pins on every column resize while ownership is
+  pinned; a smooth glide eases out of the floor so slowly that its first
+  frames stay inside the 24px pinned zone — and a freshly opened session
+  resizes constantly (markdown, images, highlighting settling), so the glide
+  was routinely yanked back and killed. Upward jumps and keyboard moves now
+  hop out of the pinned zone instantly first (which the view's scroll ledger
+  attributes to the reader, releasing the pin), then glide. Verified against
+  a forced 60ms resize storm: the glide survives start to finish.
+
 ## 0.3.7 — 2026-08-19
 
 - Hover feedback is now purely photometric: the band's geometry never
