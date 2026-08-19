@@ -1409,13 +1409,18 @@ window.__ModuleLoader__.load({
           a = clamp(wallWin.a, 0, total - 1)
           b = clamp(wallWin.b, a, total - 1)
         } else if (mode === 'up') {
+          // Page toward earlier cards, then BACKFILL the leftover room with
+          // later ones — the window slides, it does not shrink; whatever no
+          // longer fits moves to the bottom pager.
           b = clamp(anchor, 0, total - 1)
           a = b
           while (a > 0 && fits(a - 1, b)) a -= 1
+          while (b < total - 1 && fits(a, b + 1)) b += 1
         } else if (mode === 'down') {
           a = clamp(anchor, 0, total - 1)
           b = a
           while (b < total - 1 && fits(a, b + 1)) b += 1
+          while (a > 0 && fits(a - 1, b)) a -= 1
         } else {
           const focus = clamp(wallFocusIdx, 0, total - 1)
           a = focus

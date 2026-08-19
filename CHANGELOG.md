@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.7 — 2026-08-19
+
+- Paging slides the window instead of shrinking it. Paging up used to keep
+  only the newly revealed earlier cards and hide everything else; the
+  leftover room is now backfilled from the other side, so the window moves
+  like a viewport — whatever no longer fits lands in the opposite pager.
+
 ## 0.7.6 — 2026-08-19
 
 - Clicking a pager no longer closes the wall. The pagers (and the title
