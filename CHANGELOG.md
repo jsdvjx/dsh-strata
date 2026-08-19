@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.4.5 — 2026-08-19
+
+Pinned-mode layout rebuilt around a frozen frame — climbing the deck no
+longer pushes it away from under the pointer.
+
+- Expand-in-place accounting was structurally biased: the focus card is ~70px
+  taller than a strip, and pinning its top pushed that surplus downward on
+  every upward refocus, drifting the stack until cards fell off both ends.
+  Entering the deck now freezes EVERY strip position for the whole pinned
+  session; the focus expands as an overlay on its own strip.
+- The overlay opens toward where the pointer came from, covering only visited
+  strips — and the direction is never flipped: when the room on that side
+  runs out, the card shrinks to fit instead of burying the strips ahead
+  (the old bounds-flip could hide the entire upper half behind one tall card).
+- Verified by a strip-by-strip climb across the whole deck: pointer lands on
+  every aimed card, zero drifted strips, all cards reachable.
+
 ## 0.4.4 — 2026-08-19
 
 - The deck no longer vanishes while the pointer travels to it. Crossing the

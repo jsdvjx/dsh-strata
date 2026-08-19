@@ -1246,6 +1246,23 @@ window.__ModuleLoader__.load({
        *  refocusing — a hover flips data-focus and moves tops, nothing else. */
       let deckDom = null
       let deckPinned = false
+      /** Frozen strip geometry for the pinned session: nothing moves while
+       *  the pointer stays on the deck — the focus expands as an overlay. */
+      let pinnedFrozen = null
+      let deckPrevFocus = -1
+
+      /** Capture every card's current position as the pinned session's frozen frame. */
+      function snapshotPinned() {
+        if (deckDom === null) {
+          pinnedFrozen = null
+          return
+        }
+        pinnedFrozen = deckDom.cards.map(({ el }) => ({
+          top: parseFloat(el.style.top) || 0,
+          shown: el.style.display !== 'none',
+          wasFocus: el.dataset.focus === '1',
+        }))
+      }
 
       /**
        * Build (or reuse) the card, path and chip elements for one prompt list.
@@ -1253,6 +1270,7 @@ window.__ModuleLoader__.load({
        */
       function ensureDeckDom(prompts) {
         if (deckDom !== null && deckDom.prompts === prompts) return
+        pinnedFrozen = null
         deck.textContent = ''
         deck.append(connector)
         connector.textContent = ''
@@ -1345,20 +1363,61 @@ window.__ModuleLoader__.load({
         }
         const focusEl = deckDom.cards[focus].el
         focusEl.style.display = ''
+        focusEl.style.maxHeight = ''
         const focusH = Math.min(focusEl.offsetHeight, railH)
         const focusTarget = deckAnchorYFor(focus, loadedStart)
-        let focusTop
-        if (deckPinned) {
-          // Frozen base: keep the hovered card where the pointer found it,
-          // clamped only so the expansion stays inside the rail.
-          const current = parseFloat(focusEl.style.top)
-          focusTop = Number.isFinite(current)
-            ? clamp(current, 0, Math.max(0, railH - focusH))
-            : clamp((focusTarget === null ? 4 : focusTarget) - focusH / 2, 0, Math.max(0, railH - focusH))
-        } else {
-          const anchorY = focusTarget === null ? 4 : focusTarget
-          focusTop = clamp(anchorY - focusH / 2, 0, Math.max(0, railH - focusH))
+        const frozen = deckPinned && pinnedFrozen !== null && pinnedFrozen.length === total
+          ? pinnedFrozen
+          : null
+        if (frozen !== null) {
+          // Pinned: the strip frame is FROZEN — no card moves, ever. The
+          // focus expands as an overlay from its own strip, opening toward
+          // the direction the pointer came from (covering visited cards),
+          // flipped only when that would leave the rail.
+          const stripTop = frozen[focus].top
+          // Direction is decided by the travel alone and NEVER flipped: the
+          // overlay may only cover visited strips. When the room on that side
+          // runs out the card SHRINKS to fit (maxHeight) instead of flipping
+          // over the strips the pointer is heading toward.
+          const goUp = !frozen[focus].wasFocus && focus > deckPrevFocus
+          const room = goUp ? stripTop + 66 : railH + 40 - stripTop
+          focusEl.style.maxHeight = Math.max(80, Math.round(room)) + 'px'
+          const cappedH = Math.min(focusEl.offsetHeight, railH)
+          let top = goUp ? stripTop + 26 - cappedH : stripTop
+          if (top < -40) top = -40
+          focusEl.style.top = Math.round(top) + 'px'
+          focusEl.style.zIndex = '500'
+          const links = new Array(total).fill(null)
+          links[focus] = {
+            startY: clamp(focusTarget === null ? 4 : focusTarget, top + 12, top + cappedH - 12),
+            endY: focusTarget,
+            focused: true,
+          }
+          let hiddenAbove = 0
+          let hiddenBelow = 0
+          for (let i = 0; i < total; i += 1) {
+            if (i === focus) continue
+            const { el } = deckDom.cards[i]
+            if (!frozen[i].shown) {
+              el.style.display = 'none'
+              if (i < focus) hiddenAbove += 1
+              else hiddenBelow += 1
+              continue
+            }
+            el.style.display = ''
+            el.style.top = Math.round(frozen[i].top) + 'px'
+            el.style.zIndex = String(i < focus ? 400 - (focus - i) : 400 + (i - focus))
+            links[i] = { startY: frozen[i].top + 13, endY: deckAnchorYFor(i, loadedStart), focused: false }
+          }
+          deckDom.chipTop.style.display = hiddenAbove > 0 ? '' : 'none'
+          deckDom.chipTop.textContent = T.moreAbove.replace('{n}', String(hiddenAbove))
+          deckDom.chipBottom.style.display = hiddenBelow > 0 ? '' : 'none'
+          deckDom.chipBottom.textContent = T.moreBelow.replace('{n}', String(hiddenBelow))
+          drawDeckLinks(links)
+          return
         }
+        const anchorY = focusTarget === null ? 4 : focusTarget
+        const focusTop = clamp(anchorY - focusH / 2, 0, Math.max(0, railH - focusH))
         focusEl.style.top = Math.round(focusTop) + 'px'
         focusEl.style.zIndex = '500'
         const PEEK = 20
@@ -1403,14 +1462,21 @@ window.__ModuleLoader__.load({
         deckDom.chipTop.textContent = T.moreAbove.replace('{n}', String(hiddenAbove))
         deckDom.chipBottom.style.display = hiddenBelow > 0 ? '' : 'none'
         deckDom.chipBottom.textContent = T.moreBelow.replace('{n}', String(hiddenBelow))
-        // Connectors, updated in place: focus strong, rest faint, unloaded
-        // dashed and converging on the top-right corner.
+        drawDeckLinks(links)
+      }
+
+      /**
+       * Update the connector paths in place: focus strong, rest faint,
+       * unloaded dashed and converging on the top-right corner.
+       * @param links - per-card {startY, endY, focused} or null (no line).
+       */
+      function drawDeckLinks(links) {
         const GAP = 10
         const svgWidth = GAP + ANCHOR_W
         const endX = GAP + ANCHOR_W - 6.5
         connector.setAttribute('width', String(svgWidth))
         connector.setAttribute('height', String(railH))
-        for (let i = 0; i < total; i += 1) {
+        for (let i = 0; i < links.length; i += 1) {
           const path = deckDom.paths[i]
           const link = links[i]
           if (link === null) {
@@ -1461,6 +1527,7 @@ window.__ModuleLoader__.load({
         if (!deckOpen) return
         deckOpen = false
         deckPinned = false
+        pinnedFrozen = null
         deck.dataset.show = '0'
       }
 
@@ -1520,6 +1587,7 @@ window.__ModuleLoader__.load({
       const onDeckOver = (event) => {
         const i = deckIndexOf(event.target)
         if (i === -1 || i === deckFocus) return
+        deckPrevFocus = deckFocus
         deckFocus = i
         layoutDeck()
       }
@@ -1533,15 +1601,23 @@ window.__ModuleLoader__.load({
         event.preventDefault()
         const total = deckDom === null ? 0 : deckDom.prompts.length
         if (total === 0) return
+        deckPrevFocus = deckFocus
         deckFocus = clamp(deckFocus + (event.deltaY > 0 ? 1 : -1), 0, total - 1)
         layoutDeck()
       }
       const onDeckEnter = () => {
         deckPinned = true
+        // Direction sentinel: seed with the CURRENT focus, so the first
+        // refocus reads its true travel direction (a -1 seed made every
+        // first move look downward and the overlay expanded upward, burying
+        // the strips the pointer was climbing toward).
+        deckPrevFocus = deckFocus
+        snapshotPinned()
         cancelCollapse()
       }
       const onDeckLeave = () => {
         deckPinned = false
+        pinnedFrozen = null
       }
       deck.addEventListener('pointerenter', onDeckEnter)
       deck.addEventListener('pointerleave', onDeckLeave)
