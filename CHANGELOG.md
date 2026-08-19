@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.4 — 2026-08-19
+
+- The default layout is airy again. 0.5.3 made the guarantee-bubble spacing
+  unconditional, huddling the whole deck around the focus. The two regimes
+  now layer correctly: strips spread EVENLY across each side while the even
+  share stays above the 16px selectable floor, and only below it does the
+  side switch to the bubble (16px nearest, geometric compression beyond,
+  rail-edge overflow). The regimes meet seamlessly at 16px.
+
 ## 0.5.3 — 2026-08-19
 
 Climbing to the ends of the deck can no longer strand the pointer.

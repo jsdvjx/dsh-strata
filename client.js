@@ -1408,6 +1408,16 @@ window.__ModuleLoader__.load({
         // folds into the count chips.
         const OVERFLOW = 44
         const spacingAt = (d) => (d <= 3 ? 16 : Math.max(4, 16 * Math.pow(0.55, d - 3)))
+        // Two spacing regimes, meeting seamlessly at 16px. With room to
+        // spare, strips spread EVENLY across the whole side — the airy
+        // full-rail look. Only when the even share would drop below the
+        // selectable floor does the side switch to the guarantee bubble
+        // (16px for the nearest three, geometric compression beyond,
+        // borrowing the overflow buffer past the rail edge).
+        const evenAbove = (focus - start) > 0 ? focusTop / (focus - start) : 0
+        const evenBelow = (end - 1 - focus) > 0
+          ? (railH - focusTop - focusH) / (end - 1 - focus)
+          : 0
         let hiddenAbove = start
         let hiddenBelow = total - end
         const place = (i, d, top) => {
@@ -1428,7 +1438,7 @@ window.__ModuleLoader__.load({
         let yUp = focusTop
         for (let i = focus - 1; i >= 0; i -= 1) {
           const d = focus - i
-          yUp -= spacingAt(d)
+          yUp -= evenAbove >= 16 ? evenAbove : spacingAt(d)
           if (i < start || yUp < -OVERFLOW) {
             hide(i)
             if (i >= start) hiddenAbove += 1
@@ -1445,7 +1455,7 @@ window.__ModuleLoader__.load({
             continue
           }
           place(i, d, yDown)
-          yDown += spacingAt(d + 1)
+          yDown += evenBelow >= 16 ? evenBelow : spacingAt(d + 1)
         }
         deckDom.chipTop.style.display = hiddenAbove > 0 ? '' : 'none'
         deckDom.chipTop.textContent = T.moreAbove.replace('{n}', String(hiddenAbove))
