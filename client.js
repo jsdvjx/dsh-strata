@@ -239,91 +239,108 @@ window.__ModuleLoader__.load({
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
-/* Clue wall: every user message in the session, laid out full screen as a
-   pinboard grid. Opened by CLICKING a user dot; closed by Esc, the backdrop,
-   or the close button — explicit both ways, no hover traps. */
+/* Clue wall: a floating panel over the right half of the screen, opened by
+   HOVERING a user dot. Cards run in one chronological column (so the bezier
+   back to each anchor dot never crosses another card); paging buttons at the
+   top and bottom take over when the column cannot fit. */
 .dsh-strata-wall {
   position: fixed;
-  inset: 0;
+  top: 14px;
+  bottom: 14px;
+  right: 64px;
+  width: min(calc(50vw - 90px), 620px);
+  min-width: 360px;
   z-index: 90;
   display: none;
   flex-direction: column;
-  background: color-mix(in srgb, var(--dsw-alias-bg-base, #151517) 84%, transparent);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  box-sizing: border-box;
+  padding: 10px 14px 12px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--dsw-alias-bg-layer-2, #1d1e22) 92%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, .35);
 }
 .dsh-strata-wall[data-show="1"] { display: flex; }
+.dsh-strata-walllink {
+  position: absolute;
+  left: 100%;
+  top: 0;
+  width: 64px;
+  height: 100%;
+  overflow: visible;
+  pointer-events: none;
+}
 .dsh-strata-wallhead {
   display: flex;
-  align-items: center;
-  gap: 14px;
+  align-items: baseline;
+  gap: 10px;
   flex: none;
-  padding: 16px 26px 8px;
+  padding: 2px 2px 8px;
 }
 .dsh-strata-walltitle {
   color: var(--dsw-alias-label-primary, #e8eaed);
-  font-size: 14px;
+  font-size: 13px;
   font-weight: 600;
 }
 .dsh-strata-wallhint {
   flex: 1;
   color: var(--dsw-alias-label-caption, #81858c);
-  font-size: 11px;
+  font-size: 10.5px;
+  text-align: right;
 }
-.dsh-strata-wallclose {
+.dsh-strata-wallbody {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+}
+.dsh-strata-wallpager {
   flex: none;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: 0;
-  border-radius: 999px;
+  padding: 3px 0;
+  border: 1px dashed var(--dsw-alias-border-l2, rgba(128, 134, 142, .45));
+  border-radius: 8px;
   background: transparent;
   color: var(--dsw-alias-label-tertiary, #adb2b8);
-  font-size: 14px;
+  font-size: 11px;
   cursor: pointer;
+  display: none;
 }
-.dsh-strata-wallclose:hover {
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 134, 142, .12));
+.dsh-strata-wallpager:hover {
   color: var(--dsw-alias-label-primary, #e8eaed);
+  border-color: var(--dsw-alias-border-l3, rgba(128, 134, 142, .6));
 }
-.dsh-strata-wallscroll {
-  flex: 1;
-  overflow-y: auto;
-  padding: 8px 26px 30px;
-}
-.dsh-strata-wallgrid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
-  gap: 12px;
-  align-items: start;
-}
+.dsh-strata-wallpager[data-on="1"] { display: block; }
 .dsh-strata-wallcard {
+  flex: none;
   box-sizing: border-box;
-  padding: 8px 11px 9px;
+  padding: 7px 11px 8px;
   border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
   border-radius: 10px;
   background: var(--dsw-alias-bg-layer-3, #22242a);
   cursor: pointer;
-  transition: transform .14s ease, border-color .12s ease, box-shadow .14s ease;
+  display: none;
+  transition: border-color .12s ease;
 }
+.dsh-strata-wallcard[data-on="1"] { display: block; }
 .dsh-strata-wallcard:hover {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 70%, transparent);
-  transform: translateY(-2px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, .25);
 }
 .dsh-strata-wallcard[data-focus="1"] {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 80%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 30%, transparent);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 25%, transparent);
 }
 .dsh-strata-wallcard[data-loaded="0"] { border-style: dashed; }
-.dsh-strata-wallcard[data-loaded="0"] .dsh-strata-wallbody {
+.dsh-strata-wallcard[data-loaded="0"] .dsh-strata-wallcardbody {
   color: var(--dsw-alias-label-tertiary, #adb2b8);
 }
 .dsh-strata-wallcardhead {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 3px;
+  margin-bottom: 2px;
   color: var(--dsw-alias-label-caption, #81858c);
   font-size: 10.5px;
   line-height: 15px;
@@ -348,7 +365,7 @@ window.__ModuleLoader__.load({
   font-size: 12px;
   color: var(--dsh-strata-user);
 }
-.dsh-strata-wallbody {
+.dsh-strata-wallcardbody {
   color: var(--dsw-alias-label-primary, #e8eaed);
   font-size: 12px;
   line-height: 17px;
@@ -356,7 +373,7 @@ window.__ModuleLoader__.load({
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 6;
+  -webkit-line-clamp: 3;
 }
 @media (prefers-reduced-motion: reduce) {
   .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas, .dsh-strata-card,
@@ -416,7 +433,9 @@ window.__ModuleLoader__.load({
         'unloaded': '未加载',
         'loading': '载入中…',
         'wallTitle': '本会话 {n} 条发言',
-        'wallHint': '点击卡片跳转 · Esc 或点击空白关闭',
+        'wallHint': '点击卡片跳转 · Esc 关闭',
+        'pageUp': '↑ 更早 {n} 条',
+        'pageDown': '↓ 更新 {n} 条',
       },
       en: {
         'user': 'Your message',
@@ -437,7 +456,9 @@ window.__ModuleLoader__.load({
         'unloaded': 'not loaded',
         'loading': 'loading…',
         'wallTitle': '{n} prompts in this session',
-        'wallHint': 'Click a card to jump · Esc or the backdrop closes',
+        'wallHint': 'Click a card to jump · Esc closes',
+        'pageUp': '↑ {n} earlier',
+        'pageDown': '↓ {n} later',
       },
     }
 
@@ -528,23 +549,27 @@ window.__ModuleLoader__.load({
       // which would re-anchor position:fixed to itself.
       const wall = doc.createElement('div')
       wall.className = 'dsh-strata-wall'
+      const wallLink = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
+      wallLink.setAttribute('class', 'dsh-strata-walllink')
       const wallHead = doc.createElement('div')
       wallHead.className = 'dsh-strata-wallhead'
       const wallTitle = doc.createElement('div')
       wallTitle.className = 'dsh-strata-walltitle'
       const wallHint = doc.createElement('div')
       wallHint.className = 'dsh-strata-wallhint'
-      const wallClose = doc.createElement('button')
-      wallClose.type = 'button'
-      wallClose.className = 'dsh-strata-wallclose'
-      wallClose.textContent = '✕'
-      wallHead.append(wallTitle, wallHint, wallClose)
-      const wallScroll = doc.createElement('div')
-      wallScroll.className = 'dsh-strata-wallscroll'
-      const wallGrid = doc.createElement('div')
-      wallGrid.className = 'dsh-strata-wallgrid'
-      wallScroll.append(wallGrid)
-      wall.append(wallHead, wallScroll)
+      wallHead.append(wallTitle, wallHint)
+      const wallBody = doc.createElement('div')
+      wallBody.className = 'dsh-strata-wallbody'
+      const wallPagerTop = doc.createElement('button')
+      wallPagerTop.type = 'button'
+      wallPagerTop.className = 'dsh-strata-wallpager'
+      const wallCards = doc.createElement('div')
+      wallCards.style.cssText = 'flex:1;display:flex;flex-direction:column;gap:8px;min-height:0;overflow:hidden'
+      const wallPagerBottom = doc.createElement('button')
+      wallPagerBottom.type = 'button'
+      wallPagerBottom.className = 'dsh-strata-wallpager'
+      wallBody.append(wallPagerTop, wallCards, wallPagerBottom)
+      wall.append(wallLink, wallHead, wallBody)
       doc.body.appendChild(wall)
       rail.append(canvas, shadeTop, shadeBottom, lens, older)
       root.append(anchorsEl, rail, card)
@@ -1094,6 +1119,7 @@ window.__ModuleLoader__.load({
         paintCanvas()
         paintLens()
         maybeAutoLoadOlder()
+        if (wallOpen) updateWallLinks()
         if (morph !== null) schedule()
       }
 
@@ -1170,6 +1196,8 @@ window.__ModuleLoader__.load({
       let wallOpen = false
       let wallBusy = false
       let wallDom = null
+      let wallWinStart = 0
+      let wallFocusIdx = -1
 
       /**
        * Extract [{seq, time, text}] user prompts from one session-log text.
@@ -1283,12 +1311,12 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Build (or reuse) the wall grid for one prompt list.
+       * Build (or reuse) the wall's card column for one prompt list.
        * @param prompts - the full prompt list.
        */
       function buildWall(prompts) {
         if (wallDom !== null && wallDom.prompts === prompts) return
-        wallGrid.textContent = ''
+        wallCards.textContent = ''
         const cards = []
         for (let i = 0; i < prompts.length; i += 1) {
           const prompt = prompts[i]
@@ -1302,53 +1330,125 @@ window.__ModuleLoader__.load({
           const meta = doc.createElement('span')
           head.append(no, meta)
           const body = doc.createElement('div')
-          body.className = 'dsh-strata-wallbody'
+          body.className = 'dsh-strata-wallcardbody'
           body.textContent = prompt.text === '' ? T.empty : prompt.text
           el.append(head, body)
-          wallGrid.append(el)
+          wallCards.append(el)
           cards.push({ el, no, meta })
         }
         wallDom = { prompts, cards }
+        wallWinStart = 0
       }
 
-      /** Refresh per-card loaded/busy states and the wall header. */
-      function refreshWall() {
+      /** Per-page card capacity from the panel's current height. */
+      function wallPageSize() {
+        const height = wall.getBoundingClientRect().height - 90
+        return Math.max(3, Math.floor(height / 96))
+      }
+
+      /**
+       * Show the current window of cards, wire the pagers, and redraw the
+       * connectors. Everything outside the window stays display:none — no
+       * internal scrolling, paging only.
+       */
+      function layoutWall() {
         if (wallDom === null) return
         const prompts = wallDom.prompts
         const total = prompts.length
         const loadedStart = Math.max(0, total - userTotal)
         wallTitle.textContent = T.wallTitle.replace('{n}', String(total))
         wallHint.textContent = T.wallHint
+        const page = wallPageSize()
+        wallWinStart = clamp(wallWinStart, 0, Math.max(0, total - page))
+        const winEnd = Math.min(total, wallWinStart + page)
         for (let i = 0; i < total; i += 1) {
           const { el, no, meta } = wallDom.cards[i]
+          const inWindow = i >= wallWinStart && i < winEnd
+          el.dataset.on = inWindow ? '1' : '0'
+          if (!inWindow) continue
           el.dataset.loaded = i >= loadedStart ? '1' : '0'
+          el.dataset.focus = i === wallFocusIdx ? '1' : '0'
           no.textContent = String(i + 1)
           const when = prompts[i].time > 0
             ? new Date(prompts[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : ''
           meta.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
-            + (i < loadedStart ? ' · ' + (wallBusy && el.dataset.focus === '1' ? T.loading : T.unloaded) : '')
+            + (i < loadedStart ? ' · ' + (wallBusy && i === wallFocusIdx ? T.loading : T.unloaded) : '')
+        }
+        wallPagerTop.dataset.on = wallWinStart > 0 ? '1' : '0'
+        wallPagerTop.textContent = T.pageUp.replace('{n}', String(wallWinStart))
+        wallPagerBottom.dataset.on = winEnd < total ? '1' : '0'
+        wallPagerBottom.textContent = T.pageDown.replace('{n}', String(total - winEnd))
+        updateWallLinks()
+      }
+
+      /**
+       * Bezier from every visible card to its anchor dot (dashed to the top
+       * of the rail for prompts above the loaded window). Coordinates are
+       * viewport-relative, re-read live so transcript scrolling and morphs
+       * keep the lines attached.
+       */
+      function updateWallLinks() {
+        if (wallDom === null || !wallOpen) return
+        wallLink.textContent = ''
+        const wallRect = wall.getBoundingClientRect()
+        const railRect = rail.getBoundingClientRect()
+        const total = wallDom.prompts.length
+        const loadedStart = Math.max(0, total - userTotal)
+        wallLink.setAttribute('width', '64')
+        wallLink.setAttribute('height', String(Math.round(wallRect.height)))
+        for (let i = 0; i < total; i += 1) {
+          const { el } = wallDom.cards[i]
+          if (el.dataset.on !== '1') continue
+          const cardRect = el.getBoundingClientRect()
+          const startY = cardRect.top + cardRect.height / 2 - wallRect.top
+          let endX = 64
+          let endY = railRect.top + 2 - wallRect.top
+          let loaded = false
+          if (i >= loadedStart) {
+            const bandIdx = userBandIndex[i - loadedStart]
+            const dot = bandIdx === undefined
+              ? null
+              : anchorsEl.querySelector('[data-index="' + bandIdx + '"]')
+            if (dot !== null) {
+              const dotRect = dot.getBoundingClientRect()
+              endX = dotRect.left + dotRect.width / 2 - wallRect.right
+              endY = dotRect.top + dotRect.height / 2 - wallRect.top
+              loaded = true
+            }
+          }
+          const focused = i === wallFocusIdx
+          const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+          path.setAttribute('fill', 'none')
+          path.setAttribute('stroke', 'var(--dsh-strata-user)')
+          path.setAttribute('stroke-width', focused ? '1.5' : '1')
+          path.setAttribute('stroke-opacity', focused ? '0.8' : '0.3')
+          if (!loaded) path.setAttribute('stroke-dasharray', '3 3')
+          path.setAttribute('d',
+            'M 0 ' + Math.round(startY)
+            + ' C 26 ' + Math.round(startY)
+            + ', ' + Math.round(endX - 26) + ' ' + Math.round(endY)
+            + ', ' + Math.round(endX) + ' ' + Math.round(endY))
+          wallLink.append(path)
         }
       }
 
       /**
-       * Open the wall, spotlighting one LOADED user message.
+       * Open (or refocus) the wall on one LOADED user message; the window
+       * centres on it.
        * @param userIdx - index among the loaded user bands.
        */
       function openWall(userIdx) {
         wallOpen = true
+        cancelWallClose()
         hideCard()
         const spotlight = (prompts) => {
           buildWall(prompts)
-          refreshWall()
           wall.dataset.show = '1'
-          const focusIdx = Math.max(0, prompts.length - userTotal) + userIdx
-          for (const { el } of wallDom.cards) el.dataset.focus = '0'
-          const target = wallDom.cards[clamp(focusIdx, 0, prompts.length - 1)]
-          if (target !== undefined) {
-            target.el.dataset.focus = '1'
-            target.el.scrollIntoView({ block: 'center' })
-          }
+          wallFocusIdx = clamp(
+            Math.max(0, prompts.length - userTotal) + userIdx, 0, prompts.length - 1)
+          wallWinStart = Math.max(0, wallFocusIdx - Math.floor(wallPageSize() / 2))
+          layoutWall()
         }
         if (promptCache !== null && wallDom !== null
           && promptCache.prompts === wallDom.prompts
@@ -1371,6 +1471,24 @@ window.__ModuleLoader__.load({
         wall.dataset.show = '0'
       }
 
+      let wallCloseTimer = 0
+      /** Grace-close: leaving the wall AND the rail for 400ms retires it. */
+      function scheduleWallClose() {
+        if (!wallOpen) return
+        if (wallCloseTimer !== 0) window.clearTimeout(wallCloseTimer)
+        wallCloseTimer = window.setTimeout(() => {
+          wallCloseTimer = 0
+          closeWall()
+        }, 400)
+      }
+      /** A pointer back on the wall or the rail keeps it alive. */
+      function cancelWallClose() {
+        if (wallCloseTimer !== 0) {
+          window.clearTimeout(wallCloseTimer)
+          wallCloseTimer = 0
+        }
+      }
+
       /**
        * Jump to wall entry i, chain-loading older history first when the
        * entry sits above the loaded window, then close the wall.
@@ -1388,9 +1506,8 @@ window.__ModuleLoader__.load({
           return
         }
         wallBusy = true
-        for (const { el } of wallDom.cards) el.dataset.focus = '0'
-        wallDom.cards[i].el.dataset.focus = '1'
-        refreshWall()
+        wallFocusIdx = i
+        layoutWall()
         for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
           if (olderButton === null || autoLoadLatched) break
           autoLoadLatched = true
@@ -1417,7 +1534,6 @@ window.__ModuleLoader__.load({
           loadedStart = Math.max(0, prompts.length - userTotal)
         }
         wallBusy = false
-        refreshWall()
         closeWall()
         const bandIdx = userBandIndex[i - loadedStart]
         if (bandIdx !== undefined) jumpTo(bandIdx)
@@ -1434,10 +1550,20 @@ window.__ModuleLoader__.load({
         if (i !== -1) {
           event.preventDefault()
           wallJump(i)
-          return
         }
-        // Backdrop, header gap, or the ✕: anything that is not a card closes.
-        if (event.target === wallClose || !wallHead.contains(event.target)) closeWall()
+      }
+      const onWallOver = (event) => {
+        const i = wallIndexOf(event.target)
+        if (i === -1 || i === wallFocusIdx) return
+        wallFocusIdx = i
+        // Light the mapped band on the rail too.
+        const loadedStart = Math.max(0, wallDom.prompts.length - userTotal)
+        if (i >= loadedStart && userBandIndex[i - loadedStart] !== undefined) {
+          hoverIndex = userBandIndex[i - loadedStart]
+          canvasSignature = ''
+          schedule()
+        }
+        layoutWall()
       }
       const onWallKey = (event) => {
         if (event.key === 'Escape' && wallOpen) {
@@ -1445,7 +1571,20 @@ window.__ModuleLoader__.load({
           closeWall()
         }
       }
+      const onPageUp = () => {
+        wallWinStart = Math.max(0, wallWinStart - wallPageSize())
+        layoutWall()
+      }
+      const onPageDown = () => {
+        wallWinStart += wallPageSize()
+        layoutWall()
+      }
       wall.addEventListener('click', onWallClick)
+      wall.addEventListener('mouseover', onWallOver)
+      wall.addEventListener('pointerenter', cancelWallClose)
+      wall.addEventListener('pointerleave', scheduleWallClose)
+      wallPagerTop.addEventListener('click', onPageUp)
+      wallPagerBottom.addEventListener('click', onPageDown)
       doc.addEventListener('keydown', onWallKey, true)
 
       /**
@@ -1511,6 +1650,7 @@ window.__ModuleLoader__.load({
 
       let collapseTimer = 0
       const cancelCollapse = () => {
+        cancelWallClose()
         if (collapseTimer !== 0) {
           window.clearTimeout(collapseTimer)
           collapseTimer = 0
@@ -1529,6 +1669,7 @@ window.__ModuleLoader__.load({
       // event keeps the surface up through the crossing; re-entry cancels.
       const onLeave = () => {
         if (dragging) return
+        scheduleWallClose()
         if (collapseTimer !== 0) window.clearTimeout(collapseTimer)
         collapseTimer = window.setTimeout(() => {
           collapseTimer = 0
@@ -1640,10 +1781,8 @@ window.__ModuleLoader__.load({
         if (index === -1) index = anchorAtY(event.clientY)
         if (index === -1) return
         event.preventDefault()
-        // A user dot opens the clue wall; other anchors jump directly (the
-        // rail bands themselves also still jump on click).
-        if (isUserKind(bands[index].kind)) openWall(bands[index].userIndex)
-        else jumpTo(index)
+        // Hover already summons the wall; a click takes the shortest path.
+        jumpTo(index)
       }
       const onAnchorOver = (event) => {
         const index = anchorIndexOf(event.target)
@@ -1651,7 +1790,8 @@ window.__ModuleLoader__.load({
         // Light the mapped band too, so the dot and its stratum read as one.
         hoverIndex = index
         canvasSignature = ''
-        showCard(index)
+        if (isUserKind(bands[index].kind)) openWall(bands[index].userIndex)
+        else showCard(index)
         schedule()
       }
       const onAnchorOut = (event) => {
@@ -1726,7 +1866,13 @@ window.__ModuleLoader__.load({
         resizeObserver.disconnect()
         flowObserver.disconnect()
         themeObserver.disconnect()
+        if (wallCloseTimer !== 0) window.clearTimeout(wallCloseTimer)
         wall.removeEventListener('click', onWallClick)
+        wall.removeEventListener('mouseover', onWallOver)
+        wall.removeEventListener('pointerenter', cancelWallClose)
+        wall.removeEventListener('pointerleave', scheduleWallClose)
+        wallPagerTop.removeEventListener('click', onPageUp)
+        wallPagerBottom.removeEventListener('click', onPageDown)
         doc.removeEventListener('keydown', onWallKey, true)
         wall.remove()
         anchorsEl.remove()

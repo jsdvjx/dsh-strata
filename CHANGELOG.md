@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.7.0 — 2026-08-19
+
+The clue wall becomes a floating hover panel.
+
+- Hovering a user dot floats the wall over the right half of the screen —
+  one chronological column of every prompt (export-fed, unloaded included),
+  each card tied to its anchor dot by a live-tracking bezier (dashed for
+  unloaded, emphasized on the spotlight). The transcript stays visible.
+- When the column cannot fit, ↑/↓ pager buttons at the top and bottom page
+  through the rest — no internal scrolling.
+- The wall lives while the pointer is on it or the rail (400ms grace on the
+  crossings, the same discipline as the rail itself); Esc closes instantly.
+  Clicking a dot jumps directly; clicking a card jumps (chain-loading
+  unloaded history first) and closes.
+
 ## 0.6.0 — 2026-08-19
 
 The prompt browser is redesigned as the clue wall.

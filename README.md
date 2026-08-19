@@ -54,15 +54,18 @@ usually the reason you reached for the map.
 
 ## The clue wall
 
-**Clicking a user anchor dot** opens the clue wall: a full-screen pinboard of
-**every user message in the session — including the ones above the loaded
-window**, read from the session's own export log. Cards sit on a responsive
-grid in chronological order, each with a bold ordinal, a timestamp and a
-multi-line preview; unloaded prompts get a dashed border and a *not loaded*
-tag, and the message you came from is spotlighted and scrolled into view.
-**Click a card** to jump to that message — an unloaded one chain-loads the
-missing history first, then lands on it. **Esc**, the backdrop, or ✕ closes.
-Hovering a dot still shows the lightweight single-message preview.
+**Hovering a user anchor dot** floats the clue wall over the right half of
+the screen: **every user message in the session — including the ones above
+the loaded window** (read from the session's own export log) — in one
+chronological column, each card tied to its anchor dot by a bezier that
+tracks live as the transcript scrolls. Cards carry a bold ordinal, a
+timestamp and a multi-line preview; unloaded prompts get a dashed border,
+tag and dashed connector, and the message you came from is spotlighted.
+When the column cannot fit, **↑/↓ pager buttons** at the top and bottom
+page through the rest. **Click a card** to jump — an unloaded one
+chain-loads the missing history first. The wall retires when the pointer
+leaves it (grace period), or instantly on **Esc**; clicking a dot jumps
+straight to that message.
 
 ## Use
 
