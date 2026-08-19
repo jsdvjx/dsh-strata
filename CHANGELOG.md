@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.7.1 — 2026-08-19
+
+The wall packs like an evidence board.
+
+- Cards take exactly the size their content needs (up to 10 lines) instead
+  of a uniform clamp, and flow into masonry columns — the whole session fits
+  on one board whenever it can, and the window is computed by real measured
+  fit, not a fixed page size. Pagers appear only on genuine overflow and
+  page by whatever actually fits.
+- Connector strings ride above the collage at low opacity, each from its
+  card's right edge to its anchor dot, the spotlight line emphasized.
+
 ## 0.7.0 — 2026-08-19
 
 The clue wall becomes a floating hover panel.

@@ -56,13 +56,14 @@ usually the reason you reached for the map.
 
 **Hovering a user anchor dot** floats the clue wall over the right half of
 the screen: **every user message in the session — including the ones above
-the loaded window** (read from the session's own export log) — in one
-chronological column, each card tied to its anchor dot by a bezier that
-tracks live as the transcript scrolls. Cards carry a bold ordinal, a
-timestamp and a multi-line preview; unloaded prompts get a dashed border,
-tag and dashed connector, and the message you came from is spotlighted.
-When the column cannot fit, **↑/↓ pager buttons** at the top and bottom
-page through the rest. **Click a card** to jump — an unloaded one
+the loaded window** (read from the session's own export log) — packed
+like an evidence board: every card takes exactly the size its content needs
+(a one-word prompt is a small slip, a long one a tall note), flowing into
+masonry columns so the whole session fits on one board whenever it can.
+Each card is tied to its anchor dot by a bezier that tracks live as the
+transcript scrolls; unloaded prompts get a dashed border, tag and dashed
+string, and the message you came from is spotlighted. Only when the board
+truly cannot hold everything do **↑/↓ pager buttons** appear. **Click a card** to jump — an unloaded one
 chain-loads the missing history first. The wall retires when the pointer
 leaves it (grace period), or instantly on **Esc**; clicking a dot jumps
 straight to that message.

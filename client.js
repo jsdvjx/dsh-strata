@@ -265,12 +265,13 @@ window.__ModuleLoader__.load({
 .dsh-strata-wall[data-show="1"] { display: flex; }
 .dsh-strata-walllink {
   position: absolute;
-  left: 100%;
+  left: 0;
   top: 0;
-  width: 64px;
+  width: calc(100% + 64px);
   height: 100%;
   overflow: visible;
   pointer-events: none;
+  z-index: 5;
 }
 .dsh-strata-wallhead {
   display: flex;
@@ -314,7 +315,7 @@ window.__ModuleLoader__.load({
 }
 .dsh-strata-wallpager[data-on="1"] { display: block; }
 .dsh-strata-wallcard {
-  flex: none;
+  position: absolute;
   box-sizing: border-box;
   padding: 7px 11px 8px;
   border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
@@ -373,7 +374,7 @@ window.__ModuleLoader__.load({
   overflow-wrap: anywhere;
   display: -webkit-box;
   -webkit-box-orient: vertical;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 10;
 }
 @media (prefers-reduced-motion: reduce) {
   .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas, .dsh-strata-card,
@@ -1196,7 +1197,6 @@ window.__ModuleLoader__.load({
       let wallOpen = false
       let wallBusy = false
       let wallDom = null
-      let wallWinStart = 0
       let wallFocusIdx = -1
 
       /**
@@ -1337,35 +1337,113 @@ window.__ModuleLoader__.load({
           cards.push({ el, no, meta })
         }
         wallDom = { prompts, cards }
-        wallWinStart = 0
+        wallWin = { a: 0, b: -1 }
       }
 
-      /** Per-page card capacity from the panel's current height. */
-      function wallPageSize() {
-        const height = wall.getBoundingClientRect().height - 90
-        return Math.max(3, Math.floor(height / 96))
+      /** Current visible window [a, b] into the prompt list. */
+      let wallWin = { a: 0, b: -1 }
+
+      /**
+       * Greedy masonry fit: place heights[a..b] into `cols` columns and
+       * report the tallest column.
+       * @param heights - measured card heights.
+       * @param a - window start.
+       * @param b - window end (inclusive).
+       * @param cols - column count.
+       * @param gap - gap px.
+       * @returns tallest column height.
+       */
+      function masonryHeight(heights, a, b, cols, gap) {
+        const col = new Array(cols).fill(0)
+        for (let i = a; i <= b; i += 1) {
+          let best = 0
+          for (let c = 1; c < cols; c += 1) if (col[c] < col[best]) best = c
+          col[best] += heights[i] + gap
+        }
+        return Math.max(...col)
       }
 
       /**
-       * Show the current window of cards, wire the pagers, and redraw the
-       * connectors. Everything outside the window stays display:none — no
-       * internal scrolling, paging only.
+       * Lay the wall out as a packed collage: every card takes exactly the
+       * height its content needs, cards flow into masonry columns, and the
+       * window holds as many as genuinely fit — all of them when possible.
+       * Whatever remains folds into the ↑/↓ pagers.
+       * @param mode - 'around' the focus (default), 'up' ending at anchor,
+       *   'down' starting at anchor, or 'keep' the current window.
+       * @param anchor - window anchor index for 'up'/'down'.
        */
-      function layoutWall() {
+      function layoutWall(mode, anchor) {
         if (wallDom === null) return
         const prompts = wallDom.prompts
         const total = prompts.length
         const loadedStart = Math.max(0, total - userTotal)
         wallTitle.textContent = T.wallTitle.replace('{n}', String(total))
         wallHint.textContent = T.wallHint
-        const page = wallPageSize()
-        wallWinStart = clamp(wallWinStart, 0, Math.max(0, total - page))
-        const winEnd = Math.min(total, wallWinStart + page)
+        const area = wallCards.getBoundingClientRect()
+        const gap = 10
+        const cols = clamp(Math.round(area.width / 230), 1, 3)
+        const colW = Math.floor((area.width - gap * (cols - 1)) / cols)
+        // Measure every card at the column width (hidden, absolute).
+        const heights = new Array(total)
+        for (let i = 0; i < total; i += 1) {
+          const { el } = wallDom.cards[i]
+          el.dataset.on = '1'
+          el.style.visibility = 'hidden'
+          el.style.width = colW + 'px'
+          el.style.left = '0'
+          el.style.top = '0'
+        }
+        for (let i = 0; i < total; i += 1) {
+          heights[i] = wallDom.cards[i].el.offsetHeight
+        }
+        const availH = area.height - 4
+        const fits = (a, b) => masonryHeight(heights, a, b, cols, gap) <= availH
+        let a
+        let b
+        if (mode === 'keep' && wallWin.b >= wallWin.a) {
+          a = clamp(wallWin.a, 0, total - 1)
+          b = clamp(wallWin.b, a, total - 1)
+        } else if (mode === 'up') {
+          b = clamp(anchor, 0, total - 1)
+          a = b
+          while (a > 0 && fits(a - 1, b)) a -= 1
+        } else if (mode === 'down') {
+          a = clamp(anchor, 0, total - 1)
+          b = a
+          while (b < total - 1 && fits(a, b + 1)) b += 1
+        } else {
+          const focus = clamp(wallFocusIdx, 0, total - 1)
+          a = focus
+          b = focus
+          let expand = true
+          while (expand) {
+            expand = false
+            if (a > 0 && fits(a - 1, b)) {
+              a -= 1
+              expand = true
+            }
+            if (b < total - 1 && fits(a, b + 1)) {
+              b += 1
+              expand = true
+            }
+          }
+        }
+        wallWin = { a, b }
+        // Place the window; hide the rest.
+        const col = new Array(cols).fill(0)
         for (let i = 0; i < total; i += 1) {
           const { el, no, meta } = wallDom.cards[i]
-          const inWindow = i >= wallWinStart && i < winEnd
-          el.dataset.on = inWindow ? '1' : '0'
-          if (!inWindow) continue
+          if (i < a || i > b) {
+            el.dataset.on = '0'
+            el.style.visibility = ''
+            continue
+          }
+          let best = 0
+          for (let c = 1; c < cols; c += 1) if (col[c] < col[best]) best = c
+          el.style.left = (best * (colW + gap)) + 'px'
+          el.style.top = Math.round(col[best]) + 'px'
+          col[best] += heights[i] + gap
+          el.style.visibility = ''
           el.dataset.loaded = i >= loadedStart ? '1' : '0'
           el.dataset.focus = i === wallFocusIdx ? '1' : '0'
           no.textContent = String(i + 1)
@@ -1375,18 +1453,18 @@ window.__ModuleLoader__.load({
           meta.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
             + (i < loadedStart ? ' · ' + (wallBusy && i === wallFocusIdx ? T.loading : T.unloaded) : '')
         }
-        wallPagerTop.dataset.on = wallWinStart > 0 ? '1' : '0'
-        wallPagerTop.textContent = T.pageUp.replace('{n}', String(wallWinStart))
-        wallPagerBottom.dataset.on = winEnd < total ? '1' : '0'
-        wallPagerBottom.textContent = T.pageDown.replace('{n}', String(total - winEnd))
+        wallPagerTop.dataset.on = a > 0 ? '1' : '0'
+        wallPagerTop.textContent = T.pageUp.replace('{n}', String(a))
+        wallPagerBottom.dataset.on = b < total - 1 ? '1' : '0'
+        wallPagerBottom.textContent = T.pageDown.replace('{n}', String(total - 1 - b))
         updateWallLinks()
       }
 
       /**
-       * Bezier from every visible card to its anchor dot (dashed to the top
-       * of the rail for prompts above the loaded window). Coordinates are
-       * viewport-relative, re-read live so transcript scrolling and morphs
-       * keep the lines attached.
+       * Bezier from every visible card's right edge to its anchor dot
+       * (dashed toward the rail top for prompts above the loaded window).
+       * The lines ride ABOVE the collage at low opacity — coordinates are
+       * re-read live so transcript scrolling keeps them attached.
        */
       function updateWallLinks() {
         if (wallDom === null || !wallOpen) return
@@ -1395,14 +1473,15 @@ window.__ModuleLoader__.load({
         const railRect = rail.getBoundingClientRect()
         const total = wallDom.prompts.length
         const loadedStart = Math.max(0, total - userTotal)
-        wallLink.setAttribute('width', '64')
+        wallLink.setAttribute('width', String(Math.round(wallRect.width + 64)))
         wallLink.setAttribute('height', String(Math.round(wallRect.height)))
         for (let i = 0; i < total; i += 1) {
           const { el } = wallDom.cards[i]
           if (el.dataset.on !== '1') continue
           const cardRect = el.getBoundingClientRect()
+          const startX = cardRect.right - wallRect.left
           const startY = cardRect.top + cardRect.height / 2 - wallRect.top
-          let endX = 64
+          let endX = wallRect.width + 60
           let endY = railRect.top + 2 - wallRect.top
           let loaded = false
           if (i >= loadedStart) {
@@ -1412,7 +1491,7 @@ window.__ModuleLoader__.load({
               : anchorsEl.querySelector('[data-index="' + bandIdx + '"]')
             if (dot !== null) {
               const dotRect = dot.getBoundingClientRect()
-              endX = dotRect.left + dotRect.width / 2 - wallRect.right
+              endX = dotRect.left + dotRect.width / 2 - wallRect.left
               endY = dotRect.top + dotRect.height / 2 - wallRect.top
               loaded = true
             }
@@ -1422,12 +1501,13 @@ window.__ModuleLoader__.load({
           path.setAttribute('fill', 'none')
           path.setAttribute('stroke', 'var(--dsh-strata-user)')
           path.setAttribute('stroke-width', focused ? '1.5' : '1')
-          path.setAttribute('stroke-opacity', focused ? '0.8' : '0.3')
+          path.setAttribute('stroke-opacity', focused ? '0.8' : '0.25')
           if (!loaded) path.setAttribute('stroke-dasharray', '3 3')
+          const midX = (startX + endX) / 2
           path.setAttribute('d',
-            'M 0 ' + Math.round(startY)
-            + ' C 26 ' + Math.round(startY)
-            + ', ' + Math.round(endX - 26) + ' ' + Math.round(endY)
+            'M ' + Math.round(startX) + ' ' + Math.round(startY)
+            + ' C ' + Math.round(midX) + ' ' + Math.round(startY)
+            + ', ' + Math.round(midX) + ' ' + Math.round(endY)
             + ', ' + Math.round(endX) + ' ' + Math.round(endY))
           wallLink.append(path)
         }
@@ -1447,8 +1527,7 @@ window.__ModuleLoader__.load({
           wall.dataset.show = '1'
           wallFocusIdx = clamp(
             Math.max(0, prompts.length - userTotal) + userIdx, 0, prompts.length - 1)
-          wallWinStart = Math.max(0, wallFocusIdx - Math.floor(wallPageSize() / 2))
-          layoutWall()
+          layoutWall('around')
         }
         if (promptCache !== null && wallDom !== null
           && promptCache.prompts === wallDom.prompts
@@ -1507,7 +1586,7 @@ window.__ModuleLoader__.load({
         }
         wallBusy = true
         wallFocusIdx = i
-        layoutWall()
+        layoutWall('keep')
         for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
           if (olderButton === null || autoLoadLatched) break
           autoLoadLatched = true
@@ -1563,7 +1642,7 @@ window.__ModuleLoader__.load({
           canvasSignature = ''
           schedule()
         }
-        layoutWall()
+        layoutWall('keep')
       }
       const onWallKey = (event) => {
         if (event.key === 'Escape' && wallOpen) {
@@ -1572,12 +1651,10 @@ window.__ModuleLoader__.load({
         }
       }
       const onPageUp = () => {
-        wallWinStart = Math.max(0, wallWinStart - wallPageSize())
-        layoutWall()
+        layoutWall('up', wallWin.a - 1)
       }
       const onPageDown = () => {
-        wallWinStart += wallPageSize()
-        layoutWall()
+        layoutWall('down', wallWin.b + 1)
       }
       wall.addEventListener('click', onWallClick)
       wall.addEventListener('mouseover', onWallOver)
