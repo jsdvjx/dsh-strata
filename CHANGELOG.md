@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0 — 2026-08-19
+
+The prompt deck: hover a user band or its anchor dot and every user message
+in the session stacks up as cards — including the ones above the loaded
+window, read from the session's own export log (`/api/session.export`,
+unzipped in the browser; the loaded window is a contiguous log suffix, so
+the log tail aligns 1:1 with the loaded bands). The hovered card expands,
+the rest compress to one-line slivers with timestamps; unloaded prompts are
+marked with a hollow dot. Wheel steps focus, click jumps — an unloaded
+prompt chain-loads the missing history first, then lands on the message.
+Falls back to loaded-only cards when the export endpoint is unavailable.
+
 ## 0.3.8 — 2026-08-19
 
 - Clicks made right after a session opens no longer die. The chat view pins

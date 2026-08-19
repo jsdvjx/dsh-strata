@@ -52,6 +52,16 @@ you are reading stays enlarged, so the anchors double as a position indicator. A
 would collide collapse to keep the column readable; failures never collapse, since they are
 usually the reason you reached for the map.
 
+## The prompt deck
+
+Hovering a **user band or its anchor dot** opens a stacked deck of **every user
+message in the session — including the ones above the loaded window**, read
+from the session's own export log. The hovered card expands to a multi-line
+preview; the rest compress to one-line slivers with timestamps. Unloaded
+prompts show a hollow dot and a *not loaded* tag. **Wheel** steps the focus
+through the deck; **click** jumps to that message — an unloaded one
+chain-loads the missing history first, then lands on it.
+
 ## Use
 
 - **Click an anchor dot** to jump to that message or failure.

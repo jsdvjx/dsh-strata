@@ -232,6 +232,80 @@ window.__ModuleLoader__.load({
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+/* Prompt deck: every user message in the session, stacked chronologically.
+   The focused card expands; the rest compress to single-line slivers.
+   Interactive, unlike the read-only preview card. */
+.dsh-strata-deck {
+  position: absolute;
+  right: calc(100% + 10px);
+  top: 0;
+  width: 280px;
+  box-sizing: border-box;
+  display: none;
+  flex-direction: column;
+  gap: 4px;
+  pointer-events: auto;
+}
+.dsh-strata-deck[data-show="1"] { display: flex; }
+.dsh-strata-deckedge {
+  flex: none;
+  color: var(--dsw-alias-label-caption, #81858c);
+  font-size: 10px;
+  line-height: 14px;
+  text-align: center;
+}
+.dsh-strata-deckcard {
+  flex: none;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 3px 9px;
+  border: 1px solid var(--dsw-alias-border-l1, rgba(128, 134, 142, .3));
+  border-radius: 8px;
+  background: var(--dsw-alias-bg-layer-3, #22242a);
+  cursor: pointer;
+  transition: border-color .12s ease, opacity .12s ease;
+}
+.dsh-strata-deckcard[data-focus="1"] {
+  border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 65%, transparent);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, .22);
+}
+/* Dim the TEXT, not the card: element opacity would let the transcript bleed
+   through the card background. */
+.dsh-strata-deckcard[data-loaded="0"] .dsh-strata-deckbody {
+  color: var(--dsw-alias-label-tertiary, #adb2b8);
+}
+.dsh-strata-deckhead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dsw-alias-label-caption, #81858c);
+  font-size: 10px;
+  line-height: 15px;
+  white-space: nowrap;
+}
+.dsh-strata-deckhead::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--dsh-strata-user);
+}
+.dsh-strata-deckcard[data-loaded="0"] .dsh-strata-deckhead::before {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--dsh-strata-user);
+}
+.dsh-strata-deckbody {
+  color: var(--dsw-alias-label-primary, #e8eaed);
+  font-size: 11.5px;
+  line-height: 16px;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 1;
+}
+.dsh-strata-deckcard[data-focus="1"] .dsh-strata-deckbody { -webkit-line-clamp: 5; }
 @media (prefers-reduced-motion: reduce) {
   .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas, .dsh-strata-card { transition: none; }
 }
@@ -286,6 +360,10 @@ window.__ModuleLoader__.load({
         'unknown': '未知事件',
         'older': '上方还有更早的历史（滚到顶部自动加载）',
         'empty': '（无文本）',
+        'unloaded': '未加载',
+        'loading': '载入中…',
+        'moreAbove': '↑ 还有 {n} 条',
+        'moreBelow': '↓ 还有 {n} 条',
       },
       en: {
         'user': 'Your message',
@@ -303,6 +381,10 @@ window.__ModuleLoader__.load({
         'unknown': 'Unknown event',
         'older': 'Older history above — scroll to the top to load it',
         'empty': '(no text)',
+        'unloaded': 'not loaded',
+        'loading': 'loading…',
+        'moreAbove': '↑ {n} more',
+        'moreBelow': '↓ {n} more',
       },
     }
 
@@ -346,7 +428,7 @@ window.__ModuleLoader__.load({
      * @param root - the entry's own element (already in the overlay layer).
      * @returns disposer removing every listener, observer and timer.
      */
-    function mountMinimap(root) {
+    function mountMinimap(root, getSessionId) {
       const doc = root.ownerDocument
       const T = dictionary()
 
@@ -389,13 +471,16 @@ window.__ModuleLoader__.load({
       const anchorsEl = doc.createElement('div')
       anchorsEl.className = 'dsh-strata-anchors'
       anchorsEl.style.width = ANCHOR_W + 'px'
+      const deck = doc.createElement('div')
+      deck.className = 'dsh-strata-deck'
       rail.append(canvas, shadeTop, shadeBottom, lens, older)
-      root.append(anchorsEl, rail, card)
+      root.append(anchorsEl, rail, deck, card)
 
       const g = canvas.getContext('2d')
 
       let scroller = null
       let bands = []
+      let userBandIndex = []
       let anchorCandidates = []
       let anchorEntries = []
       let anchorSignature = ''
@@ -572,6 +657,10 @@ window.__ModuleLoader__.load({
         }
         bands = next
         userTotal = users
+        userBandIndex = []
+        for (let index = 0; index < bands.length; index += 1) {
+          if (bands[index].userIndex >= 0) userBandIndex.push(index)
+        }
         anchorCandidates = []
         for (let index = 0; index < bands.length; index += 1) {
           if (bands[index].anchorTone !== undefined) anchorCandidates.push(index)
@@ -833,7 +922,10 @@ window.__ModuleLoader__.load({
       function setVisible(next) {
         root.dataset.show = next ? '1' : '0'
         suppressNativeThumb(next)
-        if (!next) hideCard()
+        if (!next) {
+          hideCard()
+          closeDeck()
+        }
       }
 
       let autoLoadLatched = false
@@ -994,6 +1086,297 @@ window.__ModuleLoader__.load({
        * Scroll a band into reading position and mark where it landed.
        * @param index - band index.
        */
+      // ── prompt deck: every user message in the session ─────────────────
+      // The loaded window is a contiguous suffix of the append-only log, so
+      // the LAST K user events map 1:1 in order onto the K user bands; the
+      // rest are reachable only through the export endpoint.
+      let promptCache = null
+      let promptFetch = null
+      let deckOpen = false
+      let deckFocus = -1
+      let deckBusy = false
+
+      /**
+       * Extract [{seq, time, text}] user prompts from one session-log text.
+       * @param text - the JSONL artifact.
+       * @returns prompts in log order.
+       */
+      function parsePrompts(text) {
+        const prompts = []
+        for (const line of text.split('\n')) {
+          if (line === '' || line.indexOf('"user/message"') === -1) continue
+          let event
+          try {
+            event = JSON.parse(line)
+          } catch {
+            continue
+          }
+          if (event.type !== 'user/message') continue
+          const data = event.data
+          if (data === undefined || (data.source && data.source.kind) !== 'user') continue
+          let body = ''
+          for (const block of data.content || []) {
+            if (block.type === 'text') body += block.text
+            else if (block.type === 'image') body += '🖼 '
+          }
+          prompts.push({ seq: event.seq, time: event.time, text: body.trim() })
+        }
+        return prompts
+      }
+
+      /**
+       * Fetch and inflate the session's full log through the export endpoint.
+       * The ZIP's sizes live in the central directory (streaming writer), so
+       * the entry is located from there and inflated with deflate-raw.
+       * @param sessionId - current session.
+       * @returns prompts in log order.
+       */
+      async function fetchPrompts(sessionId) {
+        const res = await fetch('/api/session.export?sessionId=' + encodeURIComponent(sessionId))
+        if (!res.ok) throw new Error('export ' + res.status)
+        const buf = new Uint8Array(await res.arrayBuffer())
+        const view = new DataView(buf.buffer)
+        let eocd = -1
+        for (let i = buf.length - 22; i >= 0; i -= 1) {
+          if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break }
+        }
+        if (eocd === -1) throw new Error('no zip directory')
+        const count = view.getUint16(eocd + 10, true)
+        let offset = view.getUint32(eocd + 16, true)
+        for (let n = 0; n < count; n += 1) {
+          if (view.getUint32(offset, true) !== 0x02014b50) break
+          const method = view.getUint16(offset + 10, true)
+          const csize = view.getUint32(offset + 20, true)
+          const nameLen = view.getUint16(offset + 28, true)
+          const extraLen = view.getUint16(offset + 30, true)
+          const commentLen = view.getUint16(offset + 32, true)
+          const localOffset = view.getUint32(offset + 42, true)
+          const name = new TextDecoder().decode(buf.subarray(offset + 46, offset + 46 + nameLen))
+          if (name === 'session.jsonl') {
+            const lnl = view.getUint16(localOffset + 26, true)
+            const lel = view.getUint16(localOffset + 28, true)
+            const start = localOffset + 30 + lnl + lel
+            const raw = buf.subarray(start, start + csize)
+            if (method === 0) return parsePrompts(new TextDecoder().decode(raw))
+            const stream = new Blob([raw]).stream()
+              .pipeThrough(new DecompressionStream('deflate-raw'))
+            return parsePrompts(await new Response(stream).text())
+          }
+          offset += 46 + nameLen + extraLen + commentLen
+        }
+        throw new Error('session.jsonl not in export')
+      }
+
+      /**
+       * Cached prompt list for the current session; refetches when the session
+       * changed or the loaded window has grown past the cached tail.
+       * @returns prompts, or null when unavailable (deck then shows loaded only).
+       */
+      function ensurePrompts() {
+        const sessionId = getSessionId()
+        if (sessionId === undefined) return Promise.resolve(null)
+        if (promptCache !== null && promptCache.sessionId === sessionId
+          && promptCache.prompts.length >= userTotal) {
+          return Promise.resolve(promptCache.prompts)
+        }
+        if (promptFetch !== null && promptFetch.sessionId === sessionId) return promptFetch.task
+        const task = fetchPrompts(sessionId)
+          .then((prompts) => {
+            promptCache = { sessionId, prompts }
+            promptFetch = null
+            return prompts
+          })
+          .catch(() => {
+            promptFetch = null
+            return null
+          })
+        promptFetch = { sessionId, task }
+        return task
+      }
+
+      /**
+       * Fallback deck data straight from the loaded bands (export missing).
+       * @returns prompts covering only the loaded window.
+       */
+      function loadedPrompts() {
+        const prompts = []
+        for (const bandIdx of userBandIndex) {
+          const band = bands[bandIdx]
+          prompts.push({ seq: -1, time: band.el ? Number(band.el.dataset.time) || 0 : 0, text: previewOf(band) })
+        }
+        return prompts
+      }
+
+      /**
+       * Lay the deck out around the focused card: the focus expands, the rest
+       * compress to slivers, and cards beyond capacity fold into edge counts.
+       */
+      function renderDeck() {
+        const prompts = deck._prompts || []
+        const total = prompts.length
+        if (!deckOpen || total === 0) {
+          deck.dataset.show = '0'
+          return
+        }
+        deck.dataset.show = '1'
+        deck.style.height = railH + 'px'
+        const loadedStart = Math.max(0, total - userTotal)
+        const focus = clamp(deckFocus, 0, total - 1)
+        // capacity at minimum sliver height
+        const SLIVER = 24
+        const FOCUS_H = 96
+        const capacity = Math.max(3, Math.floor((railH - FOCUS_H) / 26) + 1)
+        let start = 0
+        let end = total
+        if (total > capacity) {
+          start = clamp(focus - Math.floor(capacity / 2), 0, total - capacity)
+          end = start + capacity
+        }
+        deck.textContent = ''
+        if (start > 0) {
+          const edge = doc.createElement('div')
+          edge.className = 'dsh-strata-deckedge'
+          edge.textContent = T.moreAbove.replace('{n}', String(start))
+          deck.append(edge)
+        }
+        for (let i = start; i < end; i += 1) {
+          const prompt = prompts[i]
+          const cardEl = doc.createElement('div')
+          cardEl.className = 'dsh-strata-deckcard'
+          cardEl.dataset.deckIndex = String(i)
+          cardEl.dataset.focus = i === focus ? '1' : '0'
+          cardEl.dataset.loaded = i >= loadedStart ? '1' : '0'
+          cardEl.style.minHeight = (i === focus ? 0 : SLIVER) + 'px'
+          const head = doc.createElement('div')
+          head.className = 'dsh-strata-deckhead'
+          const when = prompt.time > 0
+            ? new Date(prompt.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : ''
+          head.textContent = (i + 1) + '/' + total + (when === '' ? '' : ' · ' + when)
+            + (i < loadedStart ? ' · ' + (deckBusy && i === focus ? T.loading : T.unloaded) : '')
+          const body = doc.createElement('div')
+          body.className = 'dsh-strata-deckbody'
+          body.textContent = prompt.text === '' ? T.empty : prompt.text
+          cardEl.append(head, body)
+          deck.append(cardEl)
+        }
+        if (end < total) {
+          const edge = doc.createElement('div')
+          edge.className = 'dsh-strata-deckedge'
+          edge.textContent = T.moreBelow.replace('{n}', String(total - end))
+          deck.append(edge)
+        }
+      }
+
+      /**
+       * Open (or refocus) the deck on one user message.
+       * @param userIdx - index among the LOADED user bands (tail-aligned).
+       */
+      function openDeck(userIdx) {
+        deckOpen = true
+        hideCard()
+        const seed = deck._prompts || null
+        const align = (prompts) => {
+          if (prompts === null) prompts = loadedPrompts()
+          deck._prompts = prompts
+          deckFocus = Math.max(0, prompts.length - userTotal) + userIdx
+          renderDeck()
+        }
+        if (seed !== null && promptCache !== null && promptCache.prompts === seed
+          && seed.length >= userTotal) {
+          align(seed)
+          return
+        }
+        align(loadedPrompts())
+        ensurePrompts().then((prompts) => {
+          if (!deckOpen || prompts === null) return
+          align(prompts)
+        })
+      }
+
+      /** Retract the deck. */
+      function closeDeck() {
+        if (!deckOpen) return
+        deckOpen = false
+        deck.dataset.show = '0'
+      }
+
+      /**
+       * Jump to deck entry i, chain-loading older history first when the
+       * entry sits above the loaded window.
+       * @param i - index into the full prompt list.
+       */
+      async function deckJump(i) {
+        const prompts = deck._prompts || []
+        if (prompts[i] === undefined || deckBusy) return
+        let loadedStart = Math.max(0, prompts.length - userTotal)
+        if (i >= loadedStart) {
+          const bandIdx = userBandIndex[i - loadedStart]
+          if (bandIdx !== undefined) jumpTo(bandIdx)
+          return
+        }
+        deckBusy = true
+        renderDeck()
+        for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
+          if (olderButton === null || autoLoadLatched) break
+          autoLoadLatched = true
+          const beforeHeight = scroller.scrollHeight
+          const startedAt = Date.now()
+          olderButton.click()
+          await new Promise((resolve) => {
+            const poll = window.setInterval(() => {
+              if (disposed || scroller.scrollHeight !== beforeHeight
+                || Date.now() - startedAt > 5000) {
+                window.clearInterval(poll)
+                resolve()
+              }
+            }, 150)
+          })
+          if (disposed) return
+          if (scroller.scrollHeight > beforeHeight) startMorph(scroller.scrollHeight - beforeHeight)
+          autoLoadLatched = false
+          structureDirty = true
+          rebuild()
+          lastScrollHeight = scroller.scrollHeight
+          structureDirty = false
+          schedule()
+          loadedStart = Math.max(0, (deck._prompts || []).length - userTotal)
+        }
+        deckBusy = false
+        renderDeck()
+        const bandIdx = userBandIndex[i - loadedStart]
+        if (bandIdx !== undefined) jumpTo(bandIdx)
+      }
+
+      const deckIndexOf = (target) => {
+        const el = target instanceof Element ? target.closest('.dsh-strata-deckcard') : null
+        if (el === null) return -1
+        const parsed = Number(el.dataset.deckIndex)
+        return Number.isInteger(parsed) ? parsed : -1
+      }
+      const onDeckOver = (event) => {
+        const i = deckIndexOf(event.target)
+        if (i === -1 || i === deckFocus) return
+        deckFocus = i
+        renderDeck()
+      }
+      const onDeckClick = (event) => {
+        const i = deckIndexOf(event.target)
+        if (i === -1) return
+        event.preventDefault()
+        deckJump(i)
+      }
+      const onDeckWheel = (event) => {
+        event.preventDefault()
+        const total = (deck._prompts || []).length
+        if (total === 0) return
+        deckFocus = clamp(deckFocus + (event.deltaY > 0 ? 1 : -1), 0, total - 1)
+        renderDeck()
+      }
+      deck.addEventListener('mouseover', onDeckOver)
+      deck.addEventListener('click', onDeckClick)
+      deck.addEventListener('wheel', onDeckWheel, { passive: false })
+
       /**
        * Break the chat view's follow-the-end ownership before an upward
        * glide. Its pinned zone is the last 24px: a smooth scroll eases out of
@@ -1079,6 +1462,7 @@ window.__ModuleLoader__.load({
           root.dataset.expanded = pinned ? '1' : '0'
           hoverIndex = -1
           hideCard()
+          closeDeck()
           canvasSignature = ''
           schedule()
         }, 260)
@@ -1092,8 +1476,15 @@ window.__ModuleLoader__.load({
         if (index === hoverIndex) return
         hoverIndex = index
         canvasSignature = ''
-        if (index === -1) hideCard()
-        else showCard(index)
+        if (index === -1) {
+          hideCard()
+          closeDeck()
+        } else if (isUserKind(bands[index].kind)) {
+          openDeck(bands[index].userIndex)
+        } else {
+          closeDeck()
+          showCard(index)
+        }
         schedule()
       }
       const onDown = (event) => {
@@ -1191,7 +1582,11 @@ window.__ModuleLoader__.load({
         // Light the mapped band too, so the dot and its stratum read as one.
         hoverIndex = index
         canvasSignature = ''
-        showCard(index)
+        if (isUserKind(bands[index].kind)) openDeck(bands[index].userIndex)
+        else {
+          closeDeck()
+          showCard(index)
+        }
         schedule()
       }
       const onAnchorOut = (event) => {
@@ -1261,6 +1656,10 @@ window.__ModuleLoader__.load({
         resizeObserver.disconnect()
         flowObserver.disconnect()
         themeObserver.disconnect()
+        deck.removeEventListener('mouseover', onDeckOver)
+        deck.removeEventListener('click', onDeckClick)
+        deck.removeEventListener('wheel', onDeckWheel)
+        deck.remove()
         anchorsEl.remove()
         rail.remove()
         card.remove()
@@ -1271,12 +1670,15 @@ window.__ModuleLoader__.load({
      * The slot entry: a bare element the imperative engine owns.
      * @returns the overlay entry element.
      */
+    /** Resolved by apply(); reads the current session id off ctx.sessions. */
+    let getSessionId = () => undefined
+
     function TraceMinimap() {
       const ref = react.useRef(null)
       react.useEffect(() => {
         const element = ref.current
         if (element === null) return undefined
-        return mountMinimap(element)
+        return mountMinimap(element, getSessionId)
       }, [])
       return h('div', { ref, className: 'dsh-strata-root', 'data-plugin': ID, 'data-show': '0' })
     }
@@ -1289,6 +1691,15 @@ window.__ModuleLoader__.load({
      * @param ctx - client context.
      */
     function apply(ctx) {
+      getSessionId = () => {
+        const sessions = ctx.get('sessions')
+        if (sessions === undefined) return undefined
+        try {
+          return sessions.list.getSnapshot().current
+        } catch {
+          return undefined
+        }
+      }
       ctx.slots.inject('shell.overlay', () => ctx.slots.register({
         name: 'shell.overlay',
         id: 'strata',
