@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.2.2 — 2026-08-19
+
+The ⌃ load-older cap was practically unclickable: it sat 13px above the rail
+with a 1px dead gap in between, so the slow, aimed pointer travel it demands
+sampled the gap, collapsed the rail, and hid the cap mid-approach.
+
+- Collapse now runs on a 260ms grace timer instead of the boundary event;
+  re-entering (the cap and the anchor dots included) cancels it.
+- The cap's bottom edge is flush with the rail and it carries a generous
+  invisible hit halo; slightly larger glyph.
+- A press on the cap no longer falls through to the rail's scrub handler,
+  which used to yank the view to the top before the load even started.
+
 ## 0.2.1 — 2026-08-19
 
 Fixes two ways an anchor-dot click could die, both worst at the topmost dot:

@@ -167,8 +167,8 @@ window.__ModuleLoader__.load({
   top: -13px;
   transform: translateX(-50%);
   display: none;
-  width: 18px;
-  height: 12px;
+  width: 22px;
+  height: 13px; /* bottom edge flush with the rail top — no dead gap to cross */
   padding: 0;
   border: 0;
   border-radius: 4px;
@@ -176,7 +176,14 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-tertiary, #8b9099);
   cursor: pointer;
   line-height: 1;
-  font-size: 10px;
+  font-size: 11px;
+}
+/* Forgiving hit halo: a 22x13 target is still small, and the pointer arrives
+   here after a 500px climb — overlap the rail top and the sides. */
+.dsh-strata-older::after {
+  content: "";
+  position: absolute;
+  inset: -7px -9px;
 }
 .dsh-strata-older:hover { color: var(--dsw-alias-label-primary, #1c1e21); }
 .dsh-strata-root[data-expanded="1"] .dsh-strata-older[data-available="1"] { display: block; }
@@ -859,20 +866,33 @@ window.__ModuleLoader__.load({
         return event.clientY - rail.getBoundingClientRect().top
       }
 
+      let collapseTimer = 0
       const onEnter = () => {
+        if (collapseTimer !== 0) {
+          window.clearTimeout(collapseTimer)
+          collapseTimer = 0
+        }
         expanded = true
         root.dataset.expanded = '1'
         canvasSignature = ''
         schedule()
       }
+      // Grace-period collapse: the older cap sits above the rail and the dots
+      // beside it, so the pointer legitimately grazes past the root's edge on
+      // the way to both. Collapsing on a timer instead of on the boundary
+      // event keeps the surface up through the crossing; re-entry cancels.
       const onLeave = () => {
         if (dragging) return
-        expanded = pinned
-        root.dataset.expanded = pinned ? '1' : '0'
-        hoverIndex = -1
-        hideCard()
-        canvasSignature = ''
-        schedule()
+        if (collapseTimer !== 0) window.clearTimeout(collapseTimer)
+        collapseTimer = window.setTimeout(() => {
+          collapseTimer = 0
+          expanded = pinned
+          root.dataset.expanded = pinned ? '1' : '0'
+          hoverIndex = -1
+          hideCard()
+          canvasSignature = ''
+          schedule()
+        }, 260)
       }
       const onMove = (event) => {
         if (dragging) {
@@ -889,6 +909,8 @@ window.__ModuleLoader__.load({
       }
       const onDown = (event) => {
         if (event.button !== 0) return
+        // The older cap owns its own click; a press on it must not scrub.
+        if (event.target instanceof Node && older.contains(event.target)) return
         const y = railY(event)
         const index = bandAt(y)
         if (index === -1) scrub(y)
@@ -1027,6 +1049,7 @@ window.__ModuleLoader__.load({
 
       return () => {
         disposed = true
+        if (collapseTimer !== 0) window.clearTimeout(collapseTimer)
         if (frame !== 0) window.cancelAnimationFrame(frame)
         window.clearInterval(ticker)
         window.removeEventListener('resize', schedule)
