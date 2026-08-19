@@ -297,6 +297,54 @@ window.__ModuleLoader__.load({
     border-color .12s ease;
 }
 .dsh-strata-wallcard[data-on="1"] { visibility: visible; pointer-events: auto; }
+/* Loading choreography for an unloaded jump: the clicked card pulses and
+   shimmers over a REAL progress bar (chunks of history landed / needed),
+   its string marches toward the rail, and the rest of the collage dims. */
+.dsh-strata-wallprog {
+  position: absolute;
+  left: 0;
+  right: 100%;
+  bottom: 0;
+  height: 2px;
+  background: var(--dsh-strata-user);
+  opacity: 0;
+  transition: right .35s ease, opacity .2s ease;
+}
+.dsh-strata-wallcard[data-busy="1"] { overflow: hidden; }
+.dsh-strata-wallcard[data-busy="1"] .dsh-strata-wallprog { opacity: 1; }
+.dsh-strata-wallcard[data-busy="1"] {
+  animation: dsh-strata-pulse 1.1s ease-in-out infinite;
+}
+.dsh-strata-wallcard[data-busy="1"]::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg,
+    transparent 38%,
+    color-mix(in srgb, var(--dsh-strata-user) 14%, transparent) 50%,
+    transparent 62%);
+  transform: translateX(-100%);
+  animation: dsh-strata-shimmer 1.2s ease-in-out infinite;
+  pointer-events: none;
+}
+.dsh-strata-wall[data-busy="1"] .dsh-strata-wallcard:not([data-busy="1"]) { opacity: .45; }
+.dsh-strata-wallcard { transition-property: top, left, border-color, opacity; }
+.dsh-strata-walllink path[data-march="1"] {
+  animation: dsh-strata-march .5s linear infinite;
+}
+@keyframes dsh-strata-shimmer {
+  to { transform: translateX(100%); }
+}
+@keyframes dsh-strata-pulse {
+  0%, 100% { border-color: color-mix(in srgb, var(--dsh-strata-user) 45%, transparent); }
+  50% {
+    border-color: color-mix(in srgb, var(--dsh-strata-user) 95%, transparent);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsh-strata-user) 22%, transparent);
+  }
+}
+@keyframes dsh-strata-march {
+  to { stroke-dashoffset: -11; }
+}
 .dsh-strata-wallcard:hover {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 70%, transparent);
 }
@@ -349,7 +397,9 @@ window.__ModuleLoader__.load({
 }
 @media (prefers-reduced-motion: reduce) {
   .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas,
-  .dsh-strata-wallcard { transition: none; }
+  .dsh-strata-wallcard { transition: none; animation: none; }
+  .dsh-strata-wallcard[data-busy="1"]::after,
+  .dsh-strata-walllink path[data-march="1"] { animation: none; }
 }
 `
     const cssTagId = ID + '/minimap.css'
@@ -1265,10 +1315,12 @@ window.__ModuleLoader__.load({
           const body = doc.createElement('div')
           body.className = 'dsh-strata-wallcardbody'
           body.textContent = prompt.text === '' ? T.empty : prompt.text
-          el.append(head, body)
+          const prog = doc.createElement('div')
+          prog.className = 'dsh-strata-wallprog'
+          el.append(head, body, prog)
           el.style.transition = 'none'
           wallCards.append(el)
-          cards.push({ el, no, meta })
+          cards.push({ el, no, meta, prog })
         }
         wallDom = { prompts, cards }
         wallWin = { a: 0, b: -1 }
@@ -1484,14 +1536,21 @@ window.__ModuleLoader__.load({
             }
           }
           const focused = i === wallFocusIdx
+          const busyFocus = focused && wallBusy
           const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
           path.setAttribute('fill', 'none')
           path.setAttribute('stroke', 'var(--dsh-strata-user)')
           path.setAttribute('stroke-width', focused ? '1.5' : '1')
           path.setAttribute('stroke-opacity', focused ? '0.85' : '0.3')
-          // The spotlight is the ONLY solid string; every other card hangs
-          // by a dashed one.
-          if (!focused) path.setAttribute('stroke-dasharray', '4 4')
+          // The spotlight is the ONLY solid string; every other card hangs by
+          // a dashed one. While its history loads, the spotlight string turns
+          // into marching dashes flowing toward the rail.
+          if (busyFocus) {
+            path.setAttribute('stroke-dasharray', '6 5')
+            path.dataset.march = '1'
+          } else if (!focused) {
+            path.setAttribute('stroke-dasharray', '4 4')
+          }
           const midX = (startX + endX) / 2
           path.setAttribute('d',
             'M ' + Math.round(startX) + ' ' + Math.round(startY)
@@ -1541,7 +1600,7 @@ window.__ModuleLoader__.load({
       let wallCloseTimer = 0
       /** Grace-close: leaving the wall AND the rail for 400ms retires it. */
       function scheduleWallClose() {
-        if (!wallOpen) return
+        if (!wallOpen || wallBusy) return
         if (wallCloseTimer !== 0) window.clearTimeout(wallCloseTimer)
         wallCloseTimer = window.setTimeout(() => {
           wallCloseTimer = 0
@@ -1574,7 +1633,12 @@ window.__ModuleLoader__.load({
         }
         wallBusy = true
         wallFocusIdx = i
+        const busyCard = wallDom.cards[i]
+        wall.dataset.busy = '1'
+        busyCard.el.dataset.busy = '1'
+        busyCard.prog.style.right = '92%'
         restyleWall()
+        const startLoaded = loadedStart
         for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
           if (olderButton === null || autoLoadLatched) break
           autoLoadLatched = true
@@ -1599,8 +1663,20 @@ window.__ModuleLoader__.load({
           structureDirty = false
           schedule()
           loadedStart = Math.max(0, prompts.length - userTotal)
+          // Real progress: chunks landed over chunks needed.
+          const fraction = clamp(
+            (startLoaded - loadedStart) / Math.max(1, startLoaded - i), 0, 1)
+          busyCard.prog.style.right = Math.round((1 - fraction) * 100) + '%'
+          restyleWall()
         }
+        busyCard.prog.style.right = '0%'
+        // Let the bar land before the wall retires — the jump then carries on.
+        await new Promise((resolve) => window.setTimeout(resolve, 220))
         wallBusy = false
+        wall.dataset.busy = '0'
+        busyCard.el.dataset.busy = '0'
+        busyCard.prog.style.right = '100%'
+        restyleWall()
         closeWall()
         const bandIdx = userBandIndex[i - loadedStart]
         if (bandIdx !== undefined) jumpTo(bandIdx)

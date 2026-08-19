@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.7.4 — 2026-08-19
+
+Jumping to an unloaded prompt no longer feels stuck — the wait is staged.
+
+- The clicked card pulses in the accent blue with a shimmer sweep, over a
+  REAL progress bar: chunks of history landed over chunks needed, advancing
+  as each load lands.
+- Its string turns into marching dashes flowing toward the rail — the
+  history is visibly being pulled in — while every other card dims to
+  background.
+- The bar completes and rests a beat before the wall retires and the jump
+  carries on; the grace-close is suspended while loading so the wall cannot
+  vanish mid-wait. All of it stands down under prefers-reduced-motion.
+
 ## 0.7.3 — 2026-08-19
 
 - The lightweight preview card is gone — the wall is the single hover
