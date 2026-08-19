@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.7 — 2026-08-19
+
+- Hover feedback is now purely photometric: the band's geometry never
+  changes. Full alpha, the same-color glow, and a brightness lift painted
+  onto the identical path — verified by pixel scan (span unchanged,
+  brightness up) — replace the earlier widen, whose size flick read as
+  jitter at band scale.
+
 ## 0.3.6 — 2026-08-19
 
 - The hover stroke is gone: even inset and clamped it read as visual noise on

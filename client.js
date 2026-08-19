@@ -756,10 +756,11 @@ window.__ModuleLoader__.load({
             if ((pass === 0) === isUserKind(band.kind)) continue
             const { y, h: height, spec } = geometryOf(band)
             const hovered = index === hoverIndex
-            // Alpha alone cannot highlight a band that is already opaque (the
-            // user blue, errors): the hovered band also widens leftward and
-            // carries a same-color glow.
-            const width = Math.max(2, railW * spec.width) + (hovered ? 3 : 0)
+            // Hover must not change the band's geometry — a size flick at this
+            // scale reads as jitter. Feedback is purely photometric: full
+            // alpha, a same-color glow, and a brightness lift painted onto the
+            // SAME path.
+            const width = Math.max(2, railW * spec.width)
             const x = railW - width
             g.globalAlpha = hovered ? 1 : spec.alpha
             g.fillStyle = band.error ? tones.error : tones[spec.tone]
@@ -786,6 +787,11 @@ window.__ModuleLoader__.load({
             if (hovered) {
               g.shadowBlur = 0
               g.shadowColor = 'transparent'
+              // Brightness lift on the identical path: works on opaque bands
+              // (where raising alpha is a no-op) without touching geometry.
+              g.globalAlpha = 0.22
+              g.fillStyle = '#ffffff'
+              g.fill()
             }
           }
         }
