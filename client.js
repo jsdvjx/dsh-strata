@@ -1335,14 +1335,17 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * macOS-dock layout. The deck spans the full rail height on a fixed
-       * index grid; the hovered card magnifies in place around its own slot,
-       * and its neighbours shrink and part with distance on a springy
-       * transition. The grid is stable by construction — nothing can drift,
-       * cascade, or leave holes — and the focus expands centred on the slot
-       * the pointer is already inside, so it never slides out from under it.
+       * macOS-dock layout, anchor-aligned. The focus card centres on the
+       * caller-supplied y — the anchor dot when the hover comes from the
+       * rail, the hovered card's own current centre when it comes from the
+       * deck (so it never slides out from under the pointer). The remaining
+       * cards spread EVENLY over the space above and below the focus — a
+       * fresh distribution every time, so nothing accumulates or drifts —
+       * with size and width tapering over a long distance range.
+       * @param desiredCenter - focus centre in rail px, or undefined to keep
+       *   the focus card where it currently is.
        */
-      function layoutDeck() {
+      function layoutDeck(desiredCenter) {
         if (!deckOpen || deckDom === null || deckDom.prompts.length === 0) {
           deck.dataset.show = '0'
           return
@@ -1364,7 +1367,7 @@ window.__ModuleLoader__.load({
           headText.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
             + (i < loadedStart ? ' · ' + (deckBusy && i === focus ? T.loading : T.unloaded) : '')
         }
-        // Window: at most one card per 13px of rail; the rest fold into chips.
+        // Window: at most one card per 16px of rail; the rest fold into chips.
         const maxShown = Math.max(3, Math.floor(railH / 16))
         let start = 0
         let end = total
@@ -1372,27 +1375,33 @@ window.__ModuleLoader__.load({
           start = clamp(focus - Math.floor(maxShown / 2), 0, total - maxShown)
           end = start + maxShown
         }
-        const count = end - start
-        const stride = railH / count
-        const centerOf = (i) => (i - start) * stride + stride / 2
         const focusEl = deckDom.cards[focus].el
         focusEl.style.display = ''
         focusEl.style.height = ''
+        focusEl.style.width = '100%'
         focusEl.style.maxHeight = Math.round(Math.min(railH * 0.5, 320)) + 'px'
         const focusH = Math.min(focusEl.offsetHeight, railH)
-        const focusTop = clamp(centerOf(focus) - focusH / 2, 0, Math.max(0, railH - focusH))
+        if (deckDom.centers === undefined) deckDom.centers = []
+        let center = desiredCenter
+        if (center === undefined) {
+          center = deckDom.centers[focus]
+          if (center === undefined) center = ((focus - start) + 0.5) * (railH / (end - start))
+        }
+        const focusTop = clamp(center - focusH / 2, 0, Math.max(0, railH - focusH))
         focusEl.style.top = Math.round(focusTop) + 'px'
         focusEl.style.zIndex = '500'
+        deckDom.centers[focus] = focusTop + focusH / 2
         const focusTarget = deckAnchorYFor(focus, loadedStart)
         const links = new Array(total).fill(null)
         links[focus] = {
-          startY: clamp(centerOf(focus), focusTop + 12, focusTop + focusH - 12),
+          startY: clamp(focusTop + focusH / 2, focusTop + 12, focusTop + focusH - 12),
           endY: focusTarget,
           focused: true,
         }
-        focusEl.style.width = '100%'
-        // How far the expansion pushes the neighbourhood apart.
-        const pushBase = Math.max(0, (focusH - stride) / 2)
+        const nAbove = focus - start
+        const nBelow = end - 1 - focus
+        const spacingAbove = nAbove > 0 ? focusTop / nAbove : 0
+        const spacingBelow = nBelow > 0 ? (railH - focusTop - focusH) / nBelow : 0
         for (let i = 0; i < total; i += 1) {
           if (i === focus) continue
           const { el } = deckDom.cards[i]
@@ -1401,26 +1410,20 @@ window.__ModuleLoader__.load({
             continue
           }
           const d = Math.abs(i - focus)
-          // Size falloff: height never dips below one full line of content;
-          // WIDTH carries the depth gradient (right edge stays with the
-          // rail, the left edge recedes with distance).
-          const h = clamp(28 - 2 * d, 22, 26)
-          el.style.width = clamp(102 - 8 * d, 66, 94) + '%'
-          // …and so does the parting shove.
-          const shove = d === 1 ? 1 : d === 2 ? 0.55 : d === 3 ? 0.3 : 0.15
-          const dir = i < focus ? -1 : 1
-          const top = clamp(
-            centerOf(i) - h / 2 + dir * pushBase * shove,
-            -6,
-            railH - h + 6,
-          )
+          // Long-range falloff: width recedes 4%/step down to 60%, height
+          // 1px/step with a one-full-line floor.
+          const h = clamp(27 - d, 22, 26)
+          const w = clamp(100 - 4 * d, 60, 96)
+          const cardCenter = i < focus
+            ? focusTop - (d - 0.5) * spacingAbove
+            : focusTop + focusH + (d - 0.5) * spacingBelow
+          const top = clamp(cardCenter - h / 2, -6, railH - h + 6)
           el.style.display = ''
           el.style.height = h + 'px'
+          el.style.width = w + '%'
           el.style.top = Math.round(top) + 'px'
-          // Above the focus, nearer cards overlay farther ones (top strips
-          // stay visible); below, farther cards overlay nearer ones for the
-          // same reason. Both stay under the focus.
           el.style.zIndex = String(i < focus ? 400 - d : 300 + d)
+          deckDom.centers[i] = top + h / 2
           links[i] = { startY: top + h / 2, endY: deckAnchorYFor(i, loadedStart), focused: false }
         }
         deckDom.chipTop.style.display = start > 0 ? '' : 'none'
@@ -1466,6 +1469,19 @@ window.__ModuleLoader__.load({
        * Open (or refocus) the deck on one user message.
        * @param userIdx - index among the LOADED user bands (tail-aligned).
        */
+      /**
+       * The rail-side y the deck should hug for one LOADED user message —
+       * its kept anchor dot when present, else the band itself.
+       * @param userIdx - index among the loaded user bands.
+       * @returns rail y, or undefined when unresolvable.
+       */
+      function anchorCenterOfUser(userIdx) {
+        const bandIdx = userBandIndex[userIdx]
+        if (bandIdx === undefined) return undefined
+        const kept = anchorEntries.find((a) => a.index === bandIdx)
+        return kept !== undefined ? kept.y : geometryOf(bands[bandIdx]).y + 3
+      }
+
       function openDeck(userIdx) {
         deckOpen = true
         hideCard()
@@ -1473,13 +1489,13 @@ window.__ModuleLoader__.load({
           && promptCache.prompts === deckDom.prompts
           && deckDom.prompts.length >= userTotal) {
           deckFocus = Math.max(0, deckDom.prompts.length - userTotal) + userIdx
-          layoutDeck()
+          layoutDeck(anchorCenterOfUser(userIdx))
           return
         }
         const seed = loadedPrompts()
         ensureDeckDom(seed)
         deckFocus = Math.max(0, seed.length - userTotal) + userIdx
-        layoutDeck()
+        layoutDeck(anchorCenterOfUser(userIdx))
         ensurePrompts().then((prompts) => {
           if (!deckOpen || prompts === null) return
           if (deckDom !== null && deckDom.prompts === prompts) return
@@ -1506,7 +1522,9 @@ window.__ModuleLoader__.load({
         const oldPrompts = oldDom.prompts
         const oldFocus = clamp(deckFocus, 0, Math.max(0, oldPrompts.length - 1))
         const oldFocusEl = oldDom.cards[oldFocus]
-        const oldFocusTop = oldFocusEl === undefined ? 40 : parseFloat(oldFocusEl.el.style.top) || 40
+        const oldFocusCenter = oldFocusEl === undefined
+          ? 40
+          : (parseFloat(oldFocusEl.el.style.top) || 0) + oldFocusEl.el.offsetHeight / 2
         const focused = oldPrompts[oldFocus]
         ensureDeckDom(prompts)
         let next = -1
@@ -1517,7 +1535,7 @@ window.__ModuleLoader__.load({
           next = prompts.length - (oldPrompts.length - oldFocus)
         }
         deckFocus = clamp(next, 0, prompts.length - 1)
-        layoutDeck()
+        layoutDeck(oldFocusCenter)
       }
 
       /** Retract the deck. */

@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2 — 2026-08-19
+
+- The focus card hugs its anchor again: hovering a dot centres the card on
+  that dot's y (clamped at the rail edges; verified Δ ≤ 1px mid-rail). An
+  in-deck refocus instead keeps the hovered card's own centre, so it stays
+  under the pointer, and the other cards spread EVENLY over the space above
+  and below — a fresh distribution each time, nothing accumulates.
+- Longer gradient range: width recedes 4%/step down to a 60% floor and
+  height 1px/step down to the one-line floor, so the falloff spans ten
+  cards instead of saturating after three.
+
 ## 0.5.1 — 2026-08-19
 
 Deck gradient tuning.
