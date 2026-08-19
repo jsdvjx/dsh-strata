@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.4.3 — 2026-08-19
+
+Deck stability and performance.
+
+- Two layout modes, keyed to where the pointer is. Anchored (pointer on the
+  rail): the stack follows the hovered anchor as before. Pinned (pointer on
+  the deck): the base freezes — refocusing keeps the hovered card's top
+  exactly where the pointer found it and expands it in place, so a card can
+  never slide out from under the cursor and trigger the hover cascade that
+  made the stack jump around.
+- The deck DOM is now persistent: cards, connector paths and chips are built
+  once per prompt list and reused — a refocus flips data-focus, moves tops,
+  and rewrites path data in place instead of rebuilding everything, and top
+  shifts glide on a 140ms transition instead of snapping.
+
 ## 0.4.2 — 2026-08-19
 
 - Every deck card now draws its own bezier back to its anchor dot, fanning

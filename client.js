@@ -279,9 +279,14 @@ window.__ModuleLoader__.load({
   background: var(--dsw-alias-bg-layer-3, #22242a);
   box-shadow: 0 2px 8px rgba(0, 0, 0, .28);
   cursor: pointer;
-  transition: border-color .12s ease;
+  /* Position shifts glide instead of snapping; the DOM is persistent, so a
+     refocus only moves tops and flips data-focus. */
+  transition: top .14s ease, border-color .12s ease;
 }
 .dsh-strata-deckcard[data-focus="0"] { height: 26px; }
+.dsh-strata-deckcard .dsh-strata-deckbody { display: none; }
+.dsh-strata-deckcard[data-focus="1"] .dsh-strata-deckbody { display: -webkit-box; }
+.dsh-strata-deckcard[data-focus="1"] .dsh-strata-decksnip { display: none; }
 .dsh-strata-deckcard[data-focus="1"] {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 65%, transparent);
   box-shadow: 0 4px 14px rgba(0, 0, 0, .22);
@@ -1048,7 +1053,10 @@ window.__ModuleLoader__.load({
         paintCanvas()
         paintLens()
         maybeAutoLoadOlder()
-        if (morph !== null) schedule()
+        if (morph !== null) {
+          if (deckOpen) layoutDeck()
+          schedule()
+        }
       }
 
       /**
@@ -1234,90 +1242,127 @@ window.__ModuleLoader__.load({
         return prompts
       }
 
+      /** Persistent deck DOM: built once per prompt list, reused across
+       *  refocusing — a hover flips data-focus and moves tops, nothing else. */
+      let deckDom = null
+      let deckPinned = false
+
       /**
-       * One deck card.
-       * @param prompt - the message.
-       * @param i - full-list index.
-       * @param total - full-list length.
-       * @param loadedStart - first loaded index.
-       * @param focused - whether this is the expanded card.
-       * @returns the element (unpositioned).
+       * Build (or reuse) the card, path and chip elements for one prompt list.
+       * @param prompts - the full prompt list.
        */
-      function buildCard(prompt, i, total, loadedStart, focused) {
-        const el = doc.createElement('div')
-        el.className = 'dsh-strata-deckcard'
-        el.dataset.deckIndex = String(i)
-        el.dataset.focus = focused ? '1' : '0'
-        el.dataset.loaded = i >= loadedStart ? '1' : '0'
-        const head = doc.createElement('div')
-        head.className = 'dsh-strata-deckhead'
-        const when = prompt.time > 0
-          ? new Date(prompt.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-          : ''
-        head.textContent = (i + 1) + '/' + total + (when === '' ? '' : ' · ' + when)
-          + (i < loadedStart ? ' · ' + (deckBusy && focused ? T.loading : T.unloaded) : '')
-        el.append(head)
-        if (focused) {
-          const body = doc.createElement('div')
-          body.className = 'dsh-strata-deckbody'
-          body.textContent = prompt.text === '' ? T.empty : prompt.text
-          el.append(body)
-        } else {
+      function ensureDeckDom(prompts) {
+        if (deckDom !== null && deckDom.prompts === prompts) return
+        deck.textContent = ''
+        deck.append(connector)
+        connector.textContent = ''
+        const cards = []
+        const paths = []
+        for (let i = 0; i < prompts.length; i += 1) {
+          const prompt = prompts[i]
+          const el = doc.createElement('div')
+          el.className = 'dsh-strata-deckcard'
+          el.dataset.deckIndex = String(i)
+          el.dataset.focus = '0'
+          // No glide on first placement — only on later shifts.
+          el.style.transition = 'none'
+          const head = doc.createElement('div')
+          head.className = 'dsh-strata-deckhead'
+          const headText = doc.createElement('span')
           const snip = doc.createElement('span')
           snip.className = 'dsh-strata-decksnip'
           snip.textContent = prompt.text === '' ? T.empty : prompt.text
-          head.append(snip)
+          head.append(headText, snip)
+          const body = doc.createElement('div')
+          body.className = 'dsh-strata-deckbody'
+          body.textContent = prompt.text === '' ? T.empty : prompt.text
+          el.append(head, body)
+          deck.append(el)
+          cards.push({ el, headText })
+          const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+          path.setAttribute('fill', 'none')
+          path.setAttribute('stroke', 'var(--dsh-strata-user)')
+          connector.append(path)
+          paths.push(path)
         }
-        return el
+        const chipTop = doc.createElement('div')
+        chipTop.className = 'dsh-strata-deckchip'
+        chipTop.style.top = '2px'
+        const chipBottom = doc.createElement('div')
+        chipBottom.className = 'dsh-strata-deckchip'
+        chipBottom.style.bottom = '2px'
+        deck.append(chipTop, chipBottom)
+        deckDom = { prompts, cards, paths, chipTop, chipBottom }
+        window.requestAnimationFrame(() => {
+          if (deckDom === null) return
+          for (const card of deckDom.cards) card.el.style.transition = ''
+        })
       }
 
       /**
-       * Lay the deck out as a library-card stack anchored to the focused
-       * message's dot: the focus card sits beside its anchor (full text when
-       * it fits), the rest shingle away from it showing only their top
-       * strips, and a bezier connector ties card to dot.
+       * Rail-side target for card i: its anchor dot when loaded, else null
+       * (drawn to the top-right corner where the history extends past the map).
+       * @param i - full-list index.
+       * @param loadedStart - first loaded index.
+       * @returns rail y, or null.
        */
-      function renderDeck() {
-        const prompts = deck._prompts || []
-        const total = prompts.length
-        if (!deckOpen || total === 0) {
+      function deckAnchorYFor(i, loadedStart) {
+        const userIdx = i - loadedStart
+        if (userIdx < 0 || userBandIndex[userIdx] === undefined) return null
+        const bandIdx = userBandIndex[userIdx]
+        const kept = anchorEntries.find((a) => a.index === bandIdx)
+        return kept !== undefined ? kept.y : geometryOf(bands[bandIdx]).y + 3
+      }
+
+      /**
+       * Lay the persistent deck out. Two modes:
+       * - anchored (pointer on the rail): the focus card hugs its anchor dot,
+       *   the stack re-centering as the hovered message changes;
+       * - pinned (pointer on the deck): the base FREEZES — a refocus keeps
+       *   the hovered card's top exactly where it is and expands in place, so
+       *   the card under the pointer never moves out from under it.
+       */
+      function layoutDeck() {
+        if (!deckOpen || deckDom === null || deckDom.prompts.length === 0) {
           deck.dataset.show = '0'
           return
         }
+        const prompts = deckDom.prompts
+        const total = prompts.length
         deck.dataset.show = '1'
         deck.style.height = railH + 'px'
         const loadedStart = Math.max(0, total - userTotal)
         const focus = clamp(deckFocus, 0, total - 1)
-        // The anchor the focus card hugs: its dot when kept, else band top,
-        // else (unloaded prompt) the top of the rail where history extends.
-        // Rail-side target for card i: its anchor dot when loaded, else the
-        // top-right corner where the unloaded history extends past the map.
-        const anchorYFor = (i) => {
-          const userIdx = i - loadedStart
-          if (userIdx < 0 || userBandIndex[userIdx] === undefined) return null
-          const bandIdx = userBandIndex[userIdx]
-          const kept = anchorEntries.find((a) => a.index === bandIdx)
-          return kept !== undefined ? kept.y : geometryOf(bands[bandIdx]).y + 3
+        for (let i = 0; i < total; i += 1) {
+          const { el, headText } = deckDom.cards[i]
+          el.dataset.focus = i === focus ? '1' : '0'
+          el.dataset.loaded = i >= loadedStart ? '1' : '0'
+          const when = prompts[i].time > 0
+            ? new Date(prompts[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            : ''
+          headText.textContent = (i + 1) + '/' + total + (when === '' ? '' : ' · ' + when)
+            + (i < loadedStart ? ' · ' + (deckBusy && i === focus ? T.loading : T.unloaded) : '')
         }
-        const focusUserIdx = focus - loadedStart
-        const focusTarget = anchorYFor(focus)
-        const anchorY = focusTarget === null ? 4 : focusTarget
-        deck.textContent = ''
-        deck.append(connector)
-        const links = []
-        const focusEl = buildCard(prompts[focus], focus, total, loadedStart, true)
-        focusEl.style.zIndex = '500'
-        deck.append(focusEl)
+        const focusEl = deckDom.cards[focus].el
+        focusEl.style.display = ''
         const focusH = Math.min(focusEl.offsetHeight, railH)
+        const focusTarget = deckAnchorYFor(focus, loadedStart)
+        let focusTop
+        if (deckPinned) {
+          // Frozen base: keep the hovered card where the pointer found it,
+          // clamped only so the expansion stays inside the rail.
+          const current = parseFloat(focusEl.style.top)
+          focusTop = Number.isFinite(current)
+            ? clamp(current, 0, Math.max(0, railH - focusH))
+            : clamp((focusTarget === null ? 4 : focusTarget) - focusH / 2, 0, Math.max(0, railH - focusH))
+        } else {
+          const anchorY = focusTarget === null ? 4 : focusTarget
+          focusTop = clamp(anchorY - focusH / 2, 0, Math.max(0, railH - focusH))
+        }
+        focusEl.style.top = Math.round(focusTop) + 'px'
+        focusEl.style.zIndex = '500'
         const PEEK = 20
         const MIN_PEEK = 10
-        const focusTop = clamp(anchorY - focusH / 2, 0, Math.max(0, railH - focusH))
-        focusEl.style.top = Math.round(focusTop) + 'px'
-        links.push({
-          startY: clamp(anchorY, focusTop + 12, focusTop + focusH - 12),
-          endY: focusTarget,
-          focused: true,
-        })
         const nAbove = focus
         const nBelow = total - 1 - focus
         const spaceAbove = focusTop - 4
@@ -1326,67 +1371,63 @@ window.__ModuleLoader__.load({
         const shownBelow = Math.min(nBelow, Math.max(0, Math.floor(spaceBelow / MIN_PEEK)), 16)
         const peekAbove = shownAbove > 0 ? Math.min(PEEK, spaceAbove / shownAbove) : 0
         const peekBelow = shownBelow > 0 ? Math.min(PEEK, spaceBelow / shownBelow) : 0
-        for (let step = 1; step <= shownAbove; step += 1) {
-          const i = focus - step
-          const el = buildCard(prompts[i], i, total, loadedStart, false)
-          const top = focusTop - step * peekAbove
-          el.style.top = Math.round(top) + 'px'
-          // Nearer the focus renders on top, so every card shows its top strip.
-          el.style.zIndex = String(400 - step)
-          deck.append(el)
-          links.push({ startY: top + Math.min(peekAbove, 26) / 2, endY: anchorYFor(i), focused: false })
+        const links = new Array(total).fill(null)
+        links[focus] = {
+          startY: clamp(focusTarget === null ? 4 : focusTarget, focusTop + 12, focusTop + focusH - 12),
+          endY: focusTarget,
+          focused: true,
         }
-        for (let step = 1; step <= shownBelow; step += 1) {
-          const i = focus + step
-          const el = buildCard(prompts[i], i, total, loadedStart, false)
-          const top = focusTop + focusH + (step - 1) * peekBelow
-          el.style.top = Math.round(top) + 'px'
-          // Farther cards overlay the previous one's tail: top strips again.
-          el.style.zIndex = String(400 + step)
-          deck.append(el)
-          links.push({ startY: top + Math.min(peekBelow, 26) / 2, endY: anchorYFor(i), focused: false })
+        for (let i = 0; i < total; i += 1) {
+          if (i === focus) continue
+          const { el } = deckDom.cards[i]
+          const step = Math.abs(i - focus)
+          if (i < focus && step <= shownAbove) {
+            const top = focusTop - step * peekAbove
+            el.style.display = ''
+            el.style.top = Math.round(top) + 'px'
+            el.style.zIndex = String(400 - step)
+            links[i] = { startY: top + Math.min(peekAbove, 26) / 2, endY: deckAnchorYFor(i, loadedStart), focused: false }
+          } else if (i > focus && step <= shownBelow) {
+            const top = focusTop + focusH + (step - 1) * peekBelow
+            el.style.display = ''
+            el.style.top = Math.round(top) + 'px'
+            el.style.zIndex = String(400 + step)
+            links[i] = { startY: top + Math.min(peekBelow, 26) / 2, endY: deckAnchorYFor(i, loadedStart), focused: false }
+          } else {
+            el.style.display = 'none'
+          }
         }
         const hiddenAbove = nAbove - shownAbove
         const hiddenBelow = nBelow - shownBelow
-        if (hiddenAbove > 0) {
-          const chip = doc.createElement('div')
-          chip.className = 'dsh-strata-deckchip'
-          chip.style.top = '2px'
-          chip.textContent = T.moreAbove.replace('{n}', String(hiddenAbove))
-          deck.append(chip)
-        }
-        if (hiddenBelow > 0) {
-          const chip = doc.createElement('div')
-          chip.className = 'dsh-strata-deckchip'
-          chip.style.bottom = '2px'
-          chip.textContent = T.moreBelow.replace('{n}', String(hiddenBelow))
-          deck.append(chip)
-        }
-        // Bezier connectors: every card ties back to its own anchor dot; the
-        // unloaded ones converge on the top-right corner where their history
-        // extends past the map. Focus line solid and strong, the rest faint,
-        // unloaded dashed (echoing the hollow dots).
+        deckDom.chipTop.style.display = hiddenAbove > 0 ? '' : 'none'
+        deckDom.chipTop.textContent = T.moreAbove.replace('{n}', String(hiddenAbove))
+        deckDom.chipBottom.style.display = hiddenBelow > 0 ? '' : 'none'
+        deckDom.chipBottom.textContent = T.moreBelow.replace('{n}', String(hiddenBelow))
+        // Connectors, updated in place: focus strong, rest faint, unloaded
+        // dashed and converging on the top-right corner.
         const GAP = 10
         const svgWidth = GAP + ANCHOR_W
         const endX = GAP + ANCHOR_W - 6.5
         connector.setAttribute('width', String(svgWidth))
         connector.setAttribute('height', String(railH))
-        connector.textContent = ''
-        for (const link of links) {
+        for (let i = 0; i < total; i += 1) {
+          const path = deckDom.paths[i]
+          const link = links[i]
+          if (link === null) {
+            path.setAttribute('d', '')
+            continue
+          }
           const loaded = link.endY !== null
           const endY = loaded ? link.endY : 2
-          const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
-          path.setAttribute('fill', 'none')
-          path.setAttribute('stroke', 'var(--dsh-strata-user)')
           path.setAttribute('stroke-width', link.focused ? '1.5' : '1')
           path.setAttribute('stroke-opacity', link.focused ? '0.75' : '0.3')
-          if (!loaded) path.setAttribute('stroke-dasharray', '3 3')
+          if (loaded) path.removeAttribute('stroke-dasharray')
+          else path.setAttribute('stroke-dasharray', '3 3')
           path.setAttribute('d',
             'M 0 ' + Math.round(link.startY)
             + ' C ' + (svgWidth * 0.45) + ' ' + Math.round(link.startY)
             + ', ' + (svgWidth * 0.55) + ' ' + Math.round(endY)
             + ', ' + endX + ' ' + Math.round(endY))
-          connector.append(path)
         }
       }
 
@@ -1397,16 +1438,15 @@ window.__ModuleLoader__.load({
       function openDeck(userIdx) {
         deckOpen = true
         hideCard()
-        const seed = deck._prompts || null
         const align = (prompts) => {
-          if (prompts === null) prompts = loadedPrompts()
-          deck._prompts = prompts
+          ensureDeckDom(prompts)
           deckFocus = Math.max(0, prompts.length - userTotal) + userIdx
-          renderDeck()
+          layoutDeck()
         }
-        if (seed !== null && promptCache !== null && promptCache.prompts === seed
-          && seed.length >= userTotal) {
-          align(seed)
+        if (promptCache !== null && deckDom !== null
+          && promptCache.prompts === deckDom.prompts
+          && deckDom.prompts.length >= userTotal) {
+          align(deckDom.prompts)
           return
         }
         align(loadedPrompts())
@@ -1420,6 +1460,7 @@ window.__ModuleLoader__.load({
       function closeDeck() {
         if (!deckOpen) return
         deckOpen = false
+        deckPinned = false
         deck.dataset.show = '0'
       }
 
@@ -1429,7 +1470,7 @@ window.__ModuleLoader__.load({
        * @param i - index into the full prompt list.
        */
       async function deckJump(i) {
-        const prompts = deck._prompts || []
+        const prompts = deckDom === null ? [] : deckDom.prompts
         if (prompts[i] === undefined || deckBusy) return
         let loadedStart = Math.max(0, prompts.length - userTotal)
         if (i >= loadedStart) {
@@ -1438,7 +1479,7 @@ window.__ModuleLoader__.load({
           return
         }
         deckBusy = true
-        renderDeck()
+        layoutDeck()
         for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
           if (olderButton === null || autoLoadLatched) break
           autoLoadLatched = true
@@ -1462,10 +1503,10 @@ window.__ModuleLoader__.load({
           lastScrollHeight = scroller.scrollHeight
           structureDirty = false
           schedule()
-          loadedStart = Math.max(0, (deck._prompts || []).length - userTotal)
+          loadedStart = Math.max(0, prompts.length - userTotal)
         }
         deckBusy = false
-        renderDeck()
+        layoutDeck()
         const bandIdx = userBandIndex[i - loadedStart]
         if (bandIdx !== undefined) jumpTo(bandIdx)
       }
@@ -1480,7 +1521,7 @@ window.__ModuleLoader__.load({
         const i = deckIndexOf(event.target)
         if (i === -1 || i === deckFocus) return
         deckFocus = i
-        renderDeck()
+        layoutDeck()
       }
       const onDeckClick = (event) => {
         const i = deckIndexOf(event.target)
@@ -1490,11 +1531,19 @@ window.__ModuleLoader__.load({
       }
       const onDeckWheel = (event) => {
         event.preventDefault()
-        const total = (deck._prompts || []).length
+        const total = deckDom === null ? 0 : deckDom.prompts.length
         if (total === 0) return
         deckFocus = clamp(deckFocus + (event.deltaY > 0 ? 1 : -1), 0, total - 1)
-        renderDeck()
+        layoutDeck()
       }
+      const onDeckEnter = () => {
+        deckPinned = true
+      }
+      const onDeckLeave = () => {
+        deckPinned = false
+      }
+      deck.addEventListener('pointerenter', onDeckEnter)
+      deck.addEventListener('pointerleave', onDeckLeave)
       deck.addEventListener('mouseover', onDeckOver)
       deck.addEventListener('click', onDeckClick)
       deck.addEventListener('wheel', onDeckWheel, { passive: false })
@@ -1778,6 +1827,8 @@ window.__ModuleLoader__.load({
         resizeObserver.disconnect()
         flowObserver.disconnect()
         themeObserver.disconnect()
+        deck.removeEventListener('pointerenter', onDeckEnter)
+        deck.removeEventListener('pointerleave', onDeckLeave)
         deck.removeEventListener('mouseover', onDeckOver)
         deck.removeEventListener('click', onDeckClick)
         deck.removeEventListener('wheel', onDeckWheel)
