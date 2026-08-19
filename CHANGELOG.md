@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.1 — 2026-08-19
+
+Auto-load tuning and a rescale animation.
+
+- Loading a chunk of history now morphs the map instead of snapping it: the
+  existing strata glide to their compressed positions while the new history
+  slides in from the top, lens and anchor dots riding the same eased mapping
+  (420ms, starts on the exact frame the growth lands, skipped under
+  prefers-reduced-motion).
+- Thresholds are live ratios of the current scroll range, re-read on every
+  check so a grown scale never dilutes them: loading triggers inside the top
+  10%, then chains until 30% of headroom stands above the reading position —
+  one chunk barely moves the needle on a long session, and without the
+  headroom a reader tops out again two wheel-ticks later.
+
 ## 0.3.0 — 2026-08-19
 
 Discovering older history no longer requires aiming at a tiny button.

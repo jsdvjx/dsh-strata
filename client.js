@@ -549,7 +549,13 @@ window.__ModuleLoader__.load({
           if (bands[index].anchorTone !== undefined) anchorCandidates.push(index)
         }
         anchorSignature = ''
-        contentHeight = Math.max(scroller.scrollHeight, 1)
+        const nextHeight = Math.max(scroller.scrollHeight, 1)
+        // Start the rescale morph in the SAME frame the growth lands: waiting
+        // for the load poll would paint one hard frame of the end state first.
+        if (autoLoadLatched && nextHeight > contentHeight) {
+          startMorph(nextHeight - contentHeight)
+        }
+        contentHeight = nextHeight
         olderButton = findOlderButton(rows[0])
         older.dataset.available = olderButton === null ? '0' : '1'
       }
@@ -595,9 +601,10 @@ window.__ModuleLoader__.load({
       function syncAnchors() {
         const kept = []
         let lastY = -Infinity
+        const view = viewParams()
         for (const index of anchorCandidates) {
           const band = bands[index]
-          const y = band.top * scale()
+          const y = (band.top - view.offset) * view.k
           if (y - lastY < ANCHOR_MIN_GAP && band.anchorTone === 'user') continue
           kept.push({ index, y, tone: band.anchorTone })
           lastY = y
@@ -637,11 +644,49 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Content-space -> rail-space scale for the current map.
-       * @returns pixels of rail per pixel of transcript.
+       * Rescale morph: when a chunk of older history prepends, the map does
+       * not snap — the old strata glide from their old positions to the new,
+       * compressed ones, and the new history slides in from the top. Encoded
+       * as two eased parameters: `offset` (the prepended height, easing to 0)
+       * and `height` (the displayed content height, easing to the real one).
        */
-      function scale() {
-        return railH / contentHeight
+      let morph = null
+
+      /**
+       * Current display mapping, morph-aware.
+       * @returns `offset` in content px and `k` (rail px per content px).
+       */
+      function viewParams() {
+        if (morph !== null) {
+          const t = (performance.now() - morph.start) / morph.duration
+          if (t >= 1) {
+            morph = null
+          } else {
+            const eased = 1 - Math.pow(1 - t, 3)
+            return {
+              offset: morph.fromOffset * (1 - eased),
+              k: railH / (morph.fromHeight + (contentHeight - morph.fromHeight) * eased),
+            }
+          }
+        }
+        return { offset: 0, k: railH / contentHeight }
+      }
+
+      /**
+       * Begin (or restack) the rescale morph for a prepended chunk.
+       * @param prepended - content px inserted above the old window.
+       */
+      function startMorph(prepended) {
+        if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+        const current = viewParams()
+        morph = {
+          start: performance.now(),
+          duration: 420,
+          // Stacking on a morph in flight: freeze the currently DISPLAYED
+          // mapping as the new starting point, so chained loads stay smooth.
+          fromHeight: railH / current.k,
+          fromOffset: current.offset + prepended,
+        }
       }
 
       /**
@@ -652,7 +697,12 @@ window.__ModuleLoader__.load({
        */
       function geometryOf(band) {
         const spec = SPECS[band.kind] || FALLBACK
-        return { y: band.top * scale(), h: Math.max(spec.min, band.height * scale()), spec }
+        const view = viewParams()
+        return {
+          y: (band.top - view.offset) * view.k,
+          h: Math.max(spec.min, band.height * view.k),
+          spec,
+        }
       }
 
       /** Repaint the band canvas; skipped while nothing that affects it changed. */
@@ -704,9 +754,10 @@ window.__ModuleLoader__.load({
 
       /** Move the viewport lens onto the current scroll position. */
       function paintLens() {
-        const viewport = scroller.clientHeight * scale()
+        const view = viewParams()
+        const viewport = scroller.clientHeight * view.k
         const height = Math.max(10, viewport)
-        const y = clamp(scroller.scrollTop * scale(), 0, Math.max(0, railH - height))
+        const y = clamp((scroller.scrollTop - view.offset) * view.k, 0, Math.max(0, railH - height))
         lens.style.height = Math.round(height) + 'px'
         lens.style.transform = 'translateY(' + Math.round(y) + 'px)'
         const denom = Math.max(1, contentHeight - scroller.clientHeight)
@@ -737,22 +788,30 @@ window.__ModuleLoader__.load({
       }
 
       let autoLoadLatched = false
+      let autoLoadChaining = false
       let lastAutoLoad = 0
 
       /**
        * Load older history the moment the reader nears the top — scrolling up
        * IS the request, no matter how the view got there (wheel, lens drag,
-       * anchor jump, Home). One load in flight at a time; the latch releases
-       * when the content actually grew (DSH anchors the reading position, so
-       * the prepend pushes scrollTop away from the top and the chain pauses
-       * until the reader climbs again — or keeps loading while the lens is
-       * held at the very top).
+       * anchor jump, Home). Trigger inside the top 10% of the CURRENT scroll
+       * range, then chain further loads until 30% of headroom stands above the
+       * reading position — one chunk barely moves the needle on a long
+       * session, and a reader who just topped out would top out again two
+       * wheel-ticks later. Every ratio reads the live scrollHeight, so a
+       * grown scale never dilutes the thresholds. One load in flight at a
+       * time; DSH's anchored prepend keeps the reading position.
        */
       function maybeAutoLoadOlder() {
         if (autoLoadLatched || olderButton === null) return
-        if (scroller.scrollTop > scroller.clientHeight * 0.3) return
+        const range = Math.max(1, scroller.scrollHeight - scroller.clientHeight)
+        const ratio = scroller.scrollTop / range
+        if (ratio > (autoLoadChaining ? 0.3 : 0.1)) {
+          autoLoadChaining = false
+          return
+        }
         const now = Date.now()
-        if (now - lastAutoLoad < 800) return
+        if (now - lastAutoLoad < 400) return
         lastAutoLoad = now
         autoLoadLatched = true
         const beforeHeight = scroller.scrollHeight
@@ -761,6 +820,10 @@ window.__ModuleLoader__.load({
           if (disposed || scroller === null || !scroller.isConnected
             || scroller.scrollHeight !== beforeHeight || Date.now() - now > 5000) {
             window.clearInterval(poll)
+            const grown = scroller !== null && scroller.isConnected
+              ? scroller.scrollHeight - beforeHeight
+              : 0
+            if (grown > 0) autoLoadChaining = true
             autoLoadLatched = false
             structureDirty = true
             schedule()
@@ -788,10 +851,15 @@ window.__ModuleLoader__.load({
         }
         setVisible(true)
         layout()
+        if (morph !== null) {
+          canvasSignature = ''
+          anchorSignature = ''
+        }
         syncAnchors()
         paintCanvas()
         paintLens()
         maybeAutoLoadOlder()
+        if (morph !== null) schedule()
       }
 
       /**
