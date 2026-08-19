@@ -72,6 +72,12 @@ not scroll, or a non-chat view such as Trajectory.
 ## Install
 
 ```sh
+dsh plugin --profile web add dsh-strata
+```
+
+Or straight from the repo:
+
+```sh
 dsh plugin --profile web add "github:jsdvjx/dsh-strata#main"
 ```
 

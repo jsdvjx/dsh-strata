@@ -58,6 +58,12 @@
 ## 安装
 
 ```sh
+dsh plugin --profile web add dsh-strata
+```
+
+或直接装仓库版：
+
+```sh
 dsh plugin --profile web add "github:jsdvjx/dsh-strata#main"
 ```
 
