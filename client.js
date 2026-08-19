@@ -1538,6 +1538,7 @@ window.__ModuleLoader__.load({
       }
       const onDeckEnter = () => {
         deckPinned = true
+        cancelCollapse()
       }
       const onDeckLeave = () => {
         deckPinned = false
@@ -1610,11 +1611,14 @@ window.__ModuleLoader__.load({
       }
 
       let collapseTimer = 0
-      const onEnter = () => {
+      const cancelCollapse = () => {
         if (collapseTimer !== 0) {
           window.clearTimeout(collapseTimer)
           collapseTimer = 0
         }
+      }
+      const onEnter = () => {
+        cancelCollapse()
         expanded = true
         root.dataset.expanded = '1'
         canvasSignature = ''
@@ -1636,7 +1640,7 @@ window.__ModuleLoader__.load({
           closeDeck()
           canvasSignature = ''
           schedule()
-        }, 260)
+        }, 300)
       }
       const onMove = (event) => {
         if (dragging) {
@@ -1779,6 +1783,11 @@ window.__ModuleLoader__.load({
       // column 14px left, so collapsing the moment the pointer crosses from
       // the rail toward a dot would slide that dot out from under the aim.
       root.addEventListener('pointerleave', onLeave)
+      // Re-entering ANY part of the surface — rail, dots, or the deck across
+      // its 10px gap — cancels a pending collapse. The cancel used to live on
+      // the rail alone, so crossing to the deck raced the grace timer and the
+      // deck vanished under the pointer.
+      root.addEventListener('pointerenter', cancelCollapse)
       rail.addEventListener('pointermove', onMove)
       rail.addEventListener('pointerdown', onDown)
       rail.addEventListener('pointerup', onUp)
@@ -1806,6 +1815,7 @@ window.__ModuleLoader__.load({
         window.removeEventListener('resize', schedule)
         rail.removeEventListener('pointerenter', onEnter)
         root.removeEventListener('pointerleave', onLeave)
+        root.removeEventListener('pointerenter', cancelCollapse)
         rail.removeEventListener('pointermove', onMove)
         rail.removeEventListener('pointerdown', onDown)
         rail.removeEventListener('pointerup', onUp)

@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.4 — 2026-08-19
+
+- The deck no longer vanishes while the pointer travels to it. Crossing the
+  10px gap between the rail and the cards starts the grace-collapse timer,
+  but the cancel listened on the rail alone — landing on a card lost the
+  race and the deck closed under the pointer. Re-entering ANY part of the
+  surface (rail, dots, deck) now cancels the pending collapse, and the grace
+  window is 300ms.
+
 ## 0.4.3 — 2026-08-19
 
 Deck stability and performance.
