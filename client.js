@@ -1661,6 +1661,12 @@ window.__ModuleLoader__.load({
           wallJump(i)
           return
         }
+        // The pagers and the title pill are controls, not gaps.
+        if (event.target instanceof Element
+          && (event.target.closest('.dsh-strata-wallpager') !== null
+            || wallHead.contains(event.target))) {
+          return
+        }
         // A click in the gaps (the transcript shows through) closes the wall.
         closeWall()
       }

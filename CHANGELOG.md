@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.6 — 2026-08-19
+
+- Clicking a pager no longer closes the wall. The pagers (and the title
+  pill) sit inside the wall, so their clicks bubbled into the
+  click-in-a-gap-closes handler — paging and closing at once. Controls are
+  now excluded from the gap test.
+
 ## 0.7.5 — 2026-08-19
 
 The unloaded-jump sequence is re-staged: close, load, glide.
