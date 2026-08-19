@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.7 — 2026-08-19
+
+- Hovering a user dot always opens the deck again after history loads in.
+  A fully loaded rail packs the anchors densely, and a neighbouring error
+  dot's invisible hit halo — a later DOM sibling — could sit on top of a
+  user dot's centre: the hover then read as the error dot and the deck
+  closed instead of opening. Hit priority is now semantic (user dots above
+  error dots above compaction marks) and the halos are tighter. Verified by
+  sweeping every user dot on the fully loaded rail.
+
 ## 0.4.6 — 2026-08-19
 
 - No more hole in the middle of a pinned stack. The pinned frame used to be a

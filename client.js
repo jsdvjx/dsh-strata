@@ -119,12 +119,19 @@ window.__ModuleLoader__.load({
   pointer-events: auto;
   transition: opacity .12s ease, transform .12s ease;
 }
-/* Generous invisible hit box: a 7px dot is a poor click target on its own. */
+/* Generous invisible hit box: a 7px dot is a poor click target on its own.
+   Kept tight enough that neighbouring halos in a dense, fully-loaded rail
+   do not swallow each other. */
 .dsh-strata-anchor.dsh-strata-anchor::before {
   content: "";
   position: absolute;
-  inset: -6px -7px;
+  inset: -4px -5px;
 }
+/* Hit priority is semantic, not DOM order: a later error dot's halo must not
+   eat the hover on the user dot underneath — the deck opens from user dots. */
+.dsh-strata-anchor.dsh-strata-anchor { z-index: 1; }
+.dsh-strata-anchor.dsh-strata-anchor[data-tone="user"] { z-index: 2; }
+.dsh-strata-anchor.dsh-strata-anchor[data-tone="mark"] { z-index: 0; }
 .dsh-strata-anchor.dsh-strata-anchor:hover,
 .dsh-strata-anchor.dsh-strata-anchor[data-active="1"] {
   opacity: 1;
