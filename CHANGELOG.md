@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.2 — 2026-08-19
+
+- Every deck card now draws its own bezier back to its anchor dot, fanning
+  out across the gap: the focus line strong, the rest faint, and unloaded
+  prompts dashed and converging on the top-right corner where their history
+  extends past the map.
+
 ## 0.4.1 — 2026-08-19
 
 Deck layout redesigned around the anchor:

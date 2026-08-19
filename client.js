@@ -499,12 +499,6 @@ window.__ModuleLoader__.load({
       deck.className = 'dsh-strata-deck'
       const connector = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
       connector.setAttribute('class', 'dsh-strata-decklink')
-      const connectorPath = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
-      connectorPath.setAttribute('fill', 'none')
-      connectorPath.setAttribute('stroke', 'var(--dsh-strata-user)')
-      connectorPath.setAttribute('stroke-width', '1.5')
-      connectorPath.setAttribute('stroke-opacity', '0.75')
-      connector.append(connectorPath)
       deck.append(connector)
       rail.append(canvas, shadeTop, shadeBottom, lens, older)
       root.append(anchorsEl, rail, deck, card)
@@ -1296,15 +1290,21 @@ window.__ModuleLoader__.load({
         const focus = clamp(deckFocus, 0, total - 1)
         // The anchor the focus card hugs: its dot when kept, else band top,
         // else (unloaded prompt) the top of the rail where history extends.
-        const focusUserIdx = focus - loadedStart
-        let anchorY = 4
-        if (focusUserIdx >= 0 && userBandIndex[focusUserIdx] !== undefined) {
-          const bandIdx = userBandIndex[focusUserIdx]
+        // Rail-side target for card i: its anchor dot when loaded, else the
+        // top-right corner where the unloaded history extends past the map.
+        const anchorYFor = (i) => {
+          const userIdx = i - loadedStart
+          if (userIdx < 0 || userBandIndex[userIdx] === undefined) return null
+          const bandIdx = userBandIndex[userIdx]
           const kept = anchorEntries.find((a) => a.index === bandIdx)
-          anchorY = kept !== undefined ? kept.y : geometryOf(bands[bandIdx]).y + 3
+          return kept !== undefined ? kept.y : geometryOf(bands[bandIdx]).y + 3
         }
+        const focusUserIdx = focus - loadedStart
+        const focusTarget = anchorYFor(focus)
+        const anchorY = focusTarget === null ? 4 : focusTarget
         deck.textContent = ''
         deck.append(connector)
+        const links = []
         const focusEl = buildCard(prompts[focus], focus, total, loadedStart, true)
         focusEl.style.zIndex = '500'
         deck.append(focusEl)
@@ -1313,6 +1313,11 @@ window.__ModuleLoader__.load({
         const MIN_PEEK = 10
         const focusTop = clamp(anchorY - focusH / 2, 0, Math.max(0, railH - focusH))
         focusEl.style.top = Math.round(focusTop) + 'px'
+        links.push({
+          startY: clamp(anchorY, focusTop + 12, focusTop + focusH - 12),
+          endY: focusTarget,
+          focused: true,
+        })
         const nAbove = focus
         const nBelow = total - 1 - focus
         const spaceAbove = focusTop - 4
@@ -1322,18 +1327,24 @@ window.__ModuleLoader__.load({
         const peekAbove = shownAbove > 0 ? Math.min(PEEK, spaceAbove / shownAbove) : 0
         const peekBelow = shownBelow > 0 ? Math.min(PEEK, spaceBelow / shownBelow) : 0
         for (let step = 1; step <= shownAbove; step += 1) {
-          const el = buildCard(prompts[focus - step], focus - step, total, loadedStart, false)
-          el.style.top = Math.round(focusTop - step * peekAbove) + 'px'
+          const i = focus - step
+          const el = buildCard(prompts[i], i, total, loadedStart, false)
+          const top = focusTop - step * peekAbove
+          el.style.top = Math.round(top) + 'px'
           // Nearer the focus renders on top, so every card shows its top strip.
           el.style.zIndex = String(400 - step)
           deck.append(el)
+          links.push({ startY: top + Math.min(peekAbove, 26) / 2, endY: anchorYFor(i), focused: false })
         }
         for (let step = 1; step <= shownBelow; step += 1) {
-          const el = buildCard(prompts[focus + step], focus + step, total, loadedStart, false)
-          el.style.top = Math.round(focusTop + focusH + (step - 1) * peekBelow) + 'px'
+          const i = focus + step
+          const el = buildCard(prompts[i], i, total, loadedStart, false)
+          const top = focusTop + focusH + (step - 1) * peekBelow
+          el.style.top = Math.round(top) + 'px'
           // Farther cards overlay the previous one's tail: top strips again.
           el.style.zIndex = String(400 + step)
           deck.append(el)
+          links.push({ startY: top + Math.min(peekBelow, 26) / 2, endY: anchorYFor(i), focused: false })
         }
         const hiddenAbove = nAbove - shownAbove
         const hiddenBelow = nBelow - shownBelow
@@ -1351,20 +1362,32 @@ window.__ModuleLoader__.load({
           chip.textContent = T.moreBelow.replace('{n}', String(hiddenBelow))
           deck.append(chip)
         }
-        // Bezier connector: focus card right edge → the anchor dot. The svg
-        // spans the 10px gap plus the anchor column (24px wide).
+        // Bezier connectors: every card ties back to its own anchor dot; the
+        // unloaded ones converge on the top-right corner where their history
+        // extends past the map. Focus line solid and strong, the rest faint,
+        // unloaded dashed (echoing the hollow dots).
         const GAP = 10
         const svgWidth = GAP + ANCHOR_W
-        const startY = clamp(anchorY, focusTop + 12, focusTop + focusH - 12)
         const endX = GAP + ANCHOR_W - 6.5
-        const endY = focusUserIdx >= 0 ? anchorY : 4
         connector.setAttribute('width', String(svgWidth))
         connector.setAttribute('height', String(railH))
-        connectorPath.setAttribute('d',
-          'M 0 ' + Math.round(startY)
-          + ' C ' + (svgWidth * 0.45) + ' ' + Math.round(startY)
-          + ', ' + (svgWidth * 0.55) + ' ' + Math.round(endY)
-          + ', ' + endX + ' ' + Math.round(endY))
+        connector.textContent = ''
+        for (const link of links) {
+          const loaded = link.endY !== null
+          const endY = loaded ? link.endY : 2
+          const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+          path.setAttribute('fill', 'none')
+          path.setAttribute('stroke', 'var(--dsh-strata-user)')
+          path.setAttribute('stroke-width', link.focused ? '1.5' : '1')
+          path.setAttribute('stroke-opacity', link.focused ? '0.75' : '0.3')
+          if (!loaded) path.setAttribute('stroke-dasharray', '3 3')
+          path.setAttribute('d',
+            'M 0 ' + Math.round(link.startY)
+            + ' C ' + (svgWidth * 0.45) + ' ' + Math.round(link.startY)
+            + ', ' + (svgWidth * 0.55) + ' ' + Math.round(endY)
+            + ', ' + endX + ' ' + Math.round(endY))
+          connector.append(path)
+        }
       }
 
       /**
