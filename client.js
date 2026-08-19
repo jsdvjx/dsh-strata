@@ -156,11 +156,24 @@ window.__ModuleLoader__.load({
   left: 0;
   top: 0;
   width: 100%;
+  box-sizing: border-box;
   border-radius: 5px;
-  border: 1px solid var(--dsw-alias-border-l2, rgba(128, 134, 142, .45));
-  background: var(--dsw-alias-interactive-bg-hover, rgba(128, 134, 142, .14));
+  border: 1.5px solid color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 70%, transparent);
+  background: transparent;
   pointer-events: none;
 }
+/* The classic minimap focus treatment: everything OUTSIDE the viewport dims
+   toward the page background, so the undimmed window plus its blue edge reads
+   at a glance. Own radii — the rail cannot clip (the ⌃ sits above it). */
+.dsh-strata-shade {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--dsw-alias-bg-base, #151517) 52%, transparent);
+}
+.dsh-strata-shade[data-edge="top"] { top: 0; border-radius: 7px 7px 0 0; }
+.dsh-strata-shade[data-edge="bottom"] { border-radius: 0 0 7px 7px; }
 /* Pure indicator, not a control: history above loads by scrolling to the top,
    so this only has to say "there is more" — visible whenever that is true. */
 .dsh-strata-older {
@@ -344,6 +357,12 @@ window.__ModuleLoader__.load({
       const canvas = doc.createElement('canvas')
       canvas.className = 'dsh-strata-canvas'
       canvas.setAttribute('aria-hidden', 'true')
+      const shadeTop = doc.createElement('div')
+      shadeTop.className = 'dsh-strata-shade'
+      shadeTop.dataset.edge = 'top'
+      const shadeBottom = doc.createElement('div')
+      shadeBottom.className = 'dsh-strata-shade'
+      shadeBottom.dataset.edge = 'bottom'
       const lens = doc.createElement('div')
       lens.className = 'dsh-strata-lens'
       const older = doc.createElement('div')
@@ -365,7 +384,7 @@ window.__ModuleLoader__.load({
       const anchorsEl = doc.createElement('div')
       anchorsEl.className = 'dsh-strata-anchors'
       anchorsEl.style.width = ANCHOR_W + 'px'
-      rail.append(canvas, lens, older)
+      rail.append(canvas, shadeTop, shadeBottom, lens, older)
       root.append(anchorsEl, rail, card)
 
       const g = canvas.getContext('2d')
@@ -434,12 +453,16 @@ window.__ModuleLoader__.load({
         if (scroller !== null) {
           suppressNativeThumb(false)
           scroller.removeEventListener('scroll', schedule)
+          scroller.removeEventListener('wheel', releasePin)
+          scroller.removeEventListener('pointerdown', releasePin)
           resizeObserver.disconnect()
           flowObserver.disconnect()
         }
         scroller = found
         if (scroller === null) return false
         scroller.addEventListener('scroll', schedule, { passive: true })
+        scroller.addEventListener('wheel', releasePin, { passive: true })
+        scroller.addEventListener('pointerdown', releasePin, { passive: true })
         resizeObserver.observe(scroller)
         flowObserver.observe(scroller, { childList: true, subtree: true, characterData: true })
         structureDirty = true
@@ -760,6 +783,9 @@ window.__ModuleLoader__.load({
         const y = clamp((scroller.scrollTop - view.offset) * view.k, 0, Math.max(0, railH - height))
         lens.style.height = Math.round(height) + 'px'
         lens.style.transform = 'translateY(' + Math.round(y) + 'px)'
+        shadeTop.style.height = Math.max(0, Math.round(y)) + 'px'
+        shadeBottom.style.top = Math.round(y + height) + 'px'
+        shadeBottom.style.height = Math.max(0, Math.round(railH - y - height)) + 'px'
         const denom = Math.max(1, contentHeight - scroller.clientHeight)
         rail.setAttribute('aria-valuenow', String(Math.round(clamp(scroller.scrollTop / denom, 0, 1) * 100)))
         // "You are here": the last anchor at or above the reading line.
@@ -790,6 +816,16 @@ window.__ModuleLoader__.load({
       let autoLoadLatched = false
       let autoLoadChaining = false
       let lastAutoLoad = 0
+      // A click-jump near the top must not fight the load chain: defer loads
+      // until the smooth scroll lands, then keep the CLICKED row pinned at the
+      // reading line across every prepend — the transcript holds still while
+      // only the rail morphs. Any user scroll intent releases the pin.
+      let jumpHold = 0
+      let pinnedEl = null
+      let pinnedUntil = 0
+      const releasePin = () => {
+        pinnedEl = null
+      }
 
       /**
        * Load older history the moment the reader nears the top — scrolling up
@@ -804,6 +840,7 @@ window.__ModuleLoader__.load({
        */
       function maybeAutoLoadOlder() {
         if (autoLoadLatched || olderButton === null) return
+        if (performance.now() < jumpHold) return
         const range = Math.max(1, scroller.scrollHeight - scroller.clientHeight)
         const ratio = scroller.scrollTop / range
         if (ratio > (autoLoadChaining ? 0.3 : 0.1)) {
@@ -823,7 +860,17 @@ window.__ModuleLoader__.load({
             const grown = scroller !== null && scroller.isConnected
               ? scroller.scrollHeight - beforeHeight
               : 0
-            if (grown > 0) autoLoadChaining = true
+            if (grown > 0) {
+              autoLoadChaining = true
+              if (pinnedEl !== null && pinnedEl.isConnected && Date.now() < pinnedUntil) {
+                const drift = pinnedEl.getBoundingClientRect().top
+                  - scroller.getBoundingClientRect().top
+                  - scroller.clientHeight * 0.12
+                // DSH's own anchored prepend usually holds the row; correct
+                // only real drift, never nudge a row already in place.
+                if (Math.abs(drift) > 48) scroller.scrollTop += drift
+              }
+            }
             autoLoadLatched = false
             structureDirty = true
             schedule()
@@ -927,6 +974,12 @@ window.__ModuleLoader__.load({
       function jumpTo(index) {
         const band = bands[index]
         const target = Math.max(0, band.top - scroller.clientHeight * 0.12)
+        // Hold auto-load until the glide lands; smooth-scroll time grows with
+        // distance, so the hold does too (long glides took >1s in practice).
+        const distance = Math.abs(target - scroller.scrollTop)
+        jumpHold = performance.now() + clamp(500 + distance / 12, 600, 1800)
+        pinnedEl = band.el
+        pinnedUntil = Date.now() + 6000
         scroller.scrollTo({ top: target, behavior: 'smooth' })
         if (typeof band.el.animate !== 'function') return
         // A Web Animation leaves no class or inline style behind, so a React
@@ -946,6 +999,7 @@ window.__ModuleLoader__.load({
        * @param y - pointer offset within the rail.
        */
       function scrub(y) {
+        releasePin()
         const ratio = clamp(y / railH, 0, 1)
         scroller.scrollTop = ratio * contentHeight - scroller.clientHeight / 2
       }
@@ -1020,6 +1074,7 @@ window.__ModuleLoader__.load({
         event.preventDefault()
       }
       const onKeyDown = (event) => {
+        releasePin()
         const page = scroller.clientHeight
         const steps = {
           ArrowUp: -page * 0.15,
@@ -1154,7 +1209,11 @@ window.__ModuleLoader__.load({
         anchorsEl.removeEventListener('wheel', onWheel)
         // Hand the scrollbar back before letting go of the element.
         suppressNativeThumb(false)
-        if (scroller !== null) scroller.removeEventListener('scroll', schedule)
+        if (scroller !== null) {
+          scroller.removeEventListener('scroll', schedule)
+          scroller.removeEventListener('wheel', releasePin)
+          scroller.removeEventListener('pointerdown', releasePin)
+        }
         resizeObserver.disconnect()
         flowObserver.disconnect()
         themeObserver.disconnect()

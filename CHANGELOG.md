@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.2 — 2026-08-19
+
+- A click-jump near the top no longer stutter-hops through the load chain:
+  auto-load defers until the glide lands (hold scales with distance), and the
+  clicked row is pinned at the reading line across every prepend — corrected
+  only on real drift (>48px), released by any manual scroll (wheel, drag,
+  scrub, keyboard).
+- The viewport now stands out on the rail: everything outside the lens dims
+  toward the page background and the lens carries an accent-blue edge — the
+  classic minimap focus treatment.
+
 ## 0.3.1 — 2026-08-19
 
 Auto-load tuning and a rescale animation.
