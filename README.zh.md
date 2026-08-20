@@ -1,5 +1,9 @@
 # dsh-strata · 会话地层
 
+[![npm 版本](https://img.shields.io/npm/v/dsh-strata?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-strata)
+[![开源协议](https://img.shields.io/npm/l/dsh-strata?color=blue)](LICENSE)
+[![已收录 awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-%E5%B7%B2%E6%94%B6%E5%BD%95-6f42c1)](https://awesome-dsh-plugin.com/p/jsdvjx/dsh-strata/)
+
 [English](README.md) | 中文
 
 **给 DeepSeek Harness Web GUI 的会话轨迹缩略图** —— 它接管对话区原本的滚动条位置，

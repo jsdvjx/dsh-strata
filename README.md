@@ -1,5 +1,9 @@
 # dsh-strata
 
+[![npm version](https://img.shields.io/npm/v/dsh-strata?logo=npm&color=cb3837)](https://www.npmjs.com/package/dsh-strata)
+[![license](https://img.shields.io/npm/l/dsh-strata?color=blue)](LICENSE)
+[![listed on awesome-dsh-plugin](https://img.shields.io/badge/awesome--dsh--plugin-listed-6f42c1)](https://awesome-dsh-plugin.com/p/jsdvjx/dsh-strata/)
+
 > *Read the strata of a run.*
 
 English | [中文](README.zh.md)
