@@ -265,6 +265,13 @@ window.__ModuleLoader__.load({
 }
 .dsh-strata-wallpager {
   flex: none;
+  /* Always occupies its row: a pager that toggled between absent and
+     present would resize the card area AFTER the cards were packed against
+     the old height, clipping the bottom row. Hidden means invisible and
+     inert, never gone from the flow. */
+  display: block;
+  visibility: hidden;
+  pointer-events: none;
   padding: 3px 0;
   border: 1px dashed var(--dsw-alias-border-l2, rgba(128, 134, 142, .45));
   border-radius: 8px;
@@ -272,13 +279,12 @@ window.__ModuleLoader__.load({
   color: var(--dsw-alias-label-tertiary, #adb2b8);
   font-size: 11px;
   cursor: pointer;
-  display: none;
 }
 .dsh-strata-wallpager:hover {
   color: var(--dsw-alias-label-primary, #e8eaed);
   border-color: var(--dsw-alias-border-l3, rgba(128, 134, 142, .6));
 }
-.dsh-strata-wallpager[data-on="1"] { display: block; }
+.dsh-strata-wallpager[data-on="1"] { visibility: visible; pointer-events: auto; }
 .dsh-strata-wallcard {
   position: absolute;
   box-sizing: border-box;
@@ -315,6 +321,16 @@ window.__ModuleLoader__.load({
   transition: width .9s cubic-bezier(.25, .6, .3, 1), opacity .25s ease;
 }
 .dsh-strata-root[data-loading="1"] .dsh-strata-loadbar { opacity: 1; }
+/* A chain that stalled, hit its page cap, or ran out of pager before the
+   goal was met says so: the bar and the ⌃ turn amber instead of pretending
+   the session is fully on hand. */
+.dsh-strata-root[data-loadstate="incomplete"] .dsh-strata-loadbar,
+.dsh-strata-root[data-loadstate="incomplete"] .dsh-strata-older {
+  background: var(--dsh-strata-warn);
+  color: var(--dsh-strata-warn);
+  animation: none;
+}
+.dsh-strata-root[data-loadstate="incomplete"] .dsh-strata-older { background: transparent; }
 .dsh-strata-root[data-loading="1"] .dsh-strata-older {
   color: var(--dsh-strata-user);
   opacity: 1;
@@ -362,6 +378,20 @@ window.__ModuleLoader__.load({
 .dsh-strata-wallcard[data-focus="1"] {
   border-color: color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 80%, transparent);
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--dsw-alias-state-business-primary, #679efe) 25%, transparent);
+}
+.dsh-strata-wallcard:focus-visible,
+.dsh-strata-wallpager:focus-visible,
+.dsh-strata-zoom button:focus-visible {
+  outline: 2px solid var(--dsh-strata-user);
+  outline-offset: 1px;
+}
+.dsh-strata-wall .dsh-strata-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
 }
 .dsh-strata-wallcard[data-loaded="0"] { border-style: dashed; }
 .dsh-strata-wallcard[data-loaded="0"] .dsh-strata-wallcardbody {
@@ -470,6 +500,10 @@ window.__ModuleLoader__.load({
         'zoomInit': '初始视野：会话打开时的范围',
         'zoomMid': '中等视野：两倍初始范围（按需补载）',
         'zoomAll': '全景：整个会话（自动补载历史）',
+        'zoomGroup': '地图视野',
+        'railLabel': '会话地图：方向键滚动，Enter 打开线索墙',
+        'cardLabel': '第 {i}/{n} 条发言：',
+        'incomplete': '历史未能完整加载',
       },
       en: {
         'user': 'Your message',
@@ -496,6 +530,10 @@ window.__ModuleLoader__.load({
         'zoomInit': 'Initial view: the range at session open',
         'zoomMid': 'Medium: twice the initial range (loads as needed)',
         'zoomAll': 'Full: the whole session (loads history)',
+        'zoomGroup': 'Map scale',
+        'railLabel': 'Session map: arrow keys scroll, Enter opens the prompt wall',
+        'cardLabel': 'Prompt {i} of {n}: ',
+        'incomplete': 'History did not fully load',
       },
     }
 
@@ -530,16 +568,441 @@ window.__ModuleLoader__.load({
       return kind === 'user' || kind === 'steering'
     }
 
+    // ── pure logic ────────────────────────────────────────────────────────
+    // Everything in this block is DOM-free and exported through
+    // `exports.internals`, so the geometry, the caches and the loading
+    // state machine can be exercised under `node --test` without a browser.
+
+    /**
+     * The display window one zoom mode asks for.
+     * @param mode - 'init' | 'mid' | 'all'.
+     * @param contentHeight - total scroll extent in content px.
+     * @param initialExtent - the extent at session open (0 = unknown).
+     * @param scrollTop - current scroll position.
+     * @param clientHeight - viewport height.
+     * @returns `offset` and `extent` in content px.
+     */
+    function windowFor(mode, contentHeight, initialExtent, scrollTop, clientHeight) {
+      let extent = contentHeight
+      if (mode === 'init' && initialExtent > 0) {
+        extent = Math.min(contentHeight, initialExtent)
+      } else if (mode === 'mid' && initialExtent > 0) {
+        // Twice the initial view — always a full step out from 近, loading
+        // the difference on demand when it is not in the window yet.
+        extent = Math.min(contentHeight, initialExtent * 2)
+      }
+      if (extent < contentHeight) {
+        const center = scrollTop + clientHeight / 2
+        return { offset: clamp(center - extent / 2, 0, contentHeight - extent), extent }
+      }
+      return { offset: 0, extent: contentHeight }
+    }
+
+    /**
+     * Cache key for the band canvas. Everything that moves a pixel is in it:
+     * the rail box, the content, the hover, the palette AND the display
+     * mapping — a zoomed window slides with scrollTop, so `offset`/`k` have
+     * to be part of the key or the bitmap goes stale under moving anchors.
+     * @param p - signature parts.
+     * @returns a string equal iff the bitmap would be identical.
+     */
+    function canvasSignatureOf(p) {
+      return [
+        p.railW, p.railH, p.contentHeight, p.count, p.hoverIndex, p.colorStamp,
+        p.zoomMode,
+        // Quantised to a quarter rail-pixel: below that nothing repaints.
+        Math.round(p.offset * p.k * 4),
+        Math.round(p.k * 1e6),
+        p.dpr,
+      ].join(':')
+    }
+
+    /**
+     * Absolute scrub mapping for one drag gesture. The window is FROZEN at
+     * pointerdown: in a zoomed mode the live window follows scrollTop, so
+     * re-deriving it on every move would add the previous move's shift on
+     * top of the next — the pointer would race away from the thumb.
+     * @param drag - `{ offset, extent }` captured at pointerdown.
+     * @param y - pointer offset within the rail.
+     * @param railH - rail height.
+     * @param clientHeight - viewport height.
+     * @returns the scrollTop that centres the viewport under the pointer.
+     */
+    function scrubTarget(drag, y, railH, clientHeight) {
+      return drag.offset + clamp(y / railH, 0, 1) * drag.extent - clientHeight / 2
+    }
+
+    /**
+     * Index range of bands intersecting a content-space interval. Bands are
+     * flow rows — stacked, non-overlapping, ascending `top` — so a binary
+     * search on `top` finds the edges without touching the middle.
+     * @param bands - measured bands, ascending by top.
+     * @param lo - interval start in content px.
+     * @param hi - interval end in content px.
+     * @returns `{ start, end }` inclusive; `end < start` when empty.
+     */
+    function visibleRange(bands, lo, hi) {
+      let a = 0
+      let b = bands.length
+      // First band whose top is past `lo`; its predecessor may still reach.
+      while (a < b) {
+        const m = (a + b) >> 1
+        if (bands[m].top < lo) a = m + 1
+        else b = m
+      }
+      let start = a
+      if (start > 0 && bands[start - 1].top + bands[start - 1].height >= lo) start -= 1
+      a = start
+      b = bands.length
+      while (a < b) {
+        const m = (a + b) >> 1
+        if (bands[m].top <= hi) a = m + 1
+        else b = m
+      }
+      return { start, end: a - 1 }
+    }
+
+    /**
+     * Normalise a wheel delta to pixels.
+     * @param deltaY - raw delta.
+     * @param deltaMode - 0 pixel, 1 line, 2 page.
+     * @param lineHeight - px per line.
+     * @param pageHeight - px per page.
+     * @returns pixels to scroll by.
+     */
+    function wheelPixels(deltaY, deltaMode, lineHeight, pageHeight) {
+      if (deltaMode === 1) return deltaY * lineHeight
+      if (deltaMode === 2) return deltaY * pageHeight
+      return deltaY
+    }
+
+    /**
+     * Take over an element's scrollbar-thumb variables and hand them back
+     * EXACTLY as found — a theme or another plugin may own inline values on
+     * the same element, and `removeProperty` would erase them.
+     * @param names - the custom properties to rebind.
+     * @returns `{ hold(el), release(), held() }`.
+     */
+    function createThumbSuppressor(names) {
+      let held = null
+      const release = () => {
+        if (held === null) return
+        for (const entry of held.saved) {
+          if (entry.value === '') held.el.style.removeProperty(entry.name)
+          else held.el.style.setProperty(entry.name, entry.value, entry.priority)
+        }
+        held = null
+      }
+      const hold = (el) => {
+        if (held !== null && held.el === el) return
+        release()
+        const saved = names.map((name) => ({
+          name,
+          value: el.style.getPropertyValue(name),
+          priority: el.style.getPropertyPriority(name),
+        }))
+        held = { el, saved }
+        for (const name of names) el.style.setProperty(name, 'transparent')
+      }
+      return { hold, release, held: () => (held === null ? null : held.el) }
+    }
+
+    /**
+     * A user prompt out of one session event, or null. Mirrors the host's
+     * chat projection: only APPEND-origin `user/message` events with a
+     * human source are rows; replacement events (compaction checkpoints)
+     * and plugin-injected context never reach the transcript as prompts.
+     * @param event - parsed session event.
+     * @returns `{ seq, time, text }` or null.
+     */
+    function promptOf(event) {
+      if (event === null || typeof event !== 'object' || event.type !== 'user/message') return null
+      if (event.surfaceOp !== undefined && event.surfaceOp !== 'append') return null
+      const data = event.data
+      if (data === undefined || data === null || (data.source && data.source.kind) !== 'user') return null
+      let body = ''
+      for (const block of data.content || []) {
+        if (block.type === 'text') body += block.text
+        else if (block.type === 'image') body += '🖼 '
+      }
+      return { seq: event.seq, time: event.time, text: body.trim() }
+    }
+
+    /**
+     * Streaming JSONL prompt extractor: feed decoded chunks as they land,
+     * finish with `end()`. Only one partial line is ever held, so a long
+     * log never materialises as a whole string plus a whole line array.
+     * @returns `{ push(chunk), end() }`.
+     */
+    function createPromptParser() {
+      const prompts = []
+      let rest = ''
+      const take = (line) => {
+        if (line === '' || line.indexOf('"user/message"') === -1) return
+        let event
+        try {
+          event = JSON.parse(line)
+        } catch {
+          return
+        }
+        const prompt = promptOf(event)
+        if (prompt !== null) prompts.push(prompt)
+      }
+      return {
+        push(chunk) {
+          rest += chunk
+          let at = rest.indexOf('\n')
+          while (at !== -1) {
+            take(rest.slice(0, at))
+            rest = rest.slice(at + 1)
+            at = rest.indexOf('\n')
+          }
+        },
+        end() {
+          take(rest)
+          rest = ''
+          return prompts
+        },
+      }
+    }
+
+    /**
+     * Whole-text convenience over the streaming parser.
+     * @param text - the JSONL artifact.
+     * @returns prompts in log order.
+     */
+    function parsePrompts(text) {
+      const parser = createPromptParser()
+      parser.push(text)
+      return parser.end()
+    }
+
+    /**
+     * Session-scoped prompt list with a freshness test that cannot lie.
+     *
+     * The loaded transcript window is a contiguous SUFFIX of the log, so a
+     * cached full list is valid exactly while its last prompt is still the
+     * last loaded user row — identified by that row's anchor key, not by a
+     * count (a count grows on prepend AND on append; only append staling
+     * the cache). Rows appended since the fetch are grafted from the DOM
+     * instead of re-downloading the log. Requests carry a generation and an
+     * AbortController; a session switch or a newer request retires them,
+     * and a retired request never writes the cache or reaches a caller.
+     * @param deps - `{ fetchPrompts(sessionId, signal), getSessionId(), now() }`.
+     * @returns the store.
+     */
+    function createPromptStore(deps) {
+      let cache = null
+      let inflight = null
+      let failure = null
+      let generation = 0
+
+      const fromRows = (rows) => rows.map((row) => ({
+        seq: -1, time: row.time, text: row.text, key: row.key,
+      }))
+
+      /**
+       * Full list for the current rows if the cache still covers them.
+       * @param sessionId - current session.
+       * @param rows - loaded user rows `{ key, time, text }`, in order.
+       * @returns prompts, or null when the cache is missing or stale.
+       */
+      const cached = (sessionId, rows) => {
+        if (cache === null || cache.sessionId !== sessionId) return null
+        if (rows.length === 0) return cache.prompts
+        if (cache.prompts.length < rows.length) return null
+        let at = -1
+        for (let i = rows.length - 1; i >= 0; i -= 1) {
+          if (rows[i].key === cache.lastKey) {
+            at = i
+            break
+          }
+        }
+        if (at === -1) return null
+        if (at < rows.length - 1) {
+          cache = {
+            sessionId,
+            prompts: cache.prompts.concat(fromRows(rows.slice(at + 1))),
+            lastKey: rows[rows.length - 1].key,
+          }
+        }
+        return cache.prompts
+      }
+
+      const abortInflight = () => {
+        if (inflight === null) return
+        try {
+          inflight.controller.abort()
+        } catch {
+          // Already settled.
+        }
+        inflight = null
+      }
+
+      /**
+       * @param sessionId - current session.
+       * @param rows - loaded user rows now.
+       * @param currentRows - reads the loaded user rows when the fetch lands.
+       * @returns `{ prompts, complete, pending }` — `pending` resolves to
+       *   the full list, or null when the request was retired or failed.
+       */
+      const get = (sessionId, rows, currentRows) => {
+        const hit = cached(sessionId, rows)
+        if (hit !== null) return { prompts: hit, complete: true, pending: null }
+        const partial = fromRows(rows)
+        if (sessionId === undefined) return { prompts: partial, complete: false, pending: null }
+        if (inflight !== null && inflight.sessionId === sessionId) {
+          return { prompts: partial, complete: false, pending: inflight.task }
+        }
+        if (failure !== null && failure.sessionId === sessionId && deps.now() < failure.until) {
+          return { prompts: partial, complete: false, pending: null }
+        }
+        abortInflight()
+        generation += 1
+        const gen = generation
+        const controller = typeof AbortController === 'function' ? new AbortController() : { abort() {}, signal: undefined }
+        let request
+        try {
+          request = Promise.resolve(deps.fetchPrompts(sessionId, controller.signal))
+        } catch (error) {
+          request = Promise.reject(error)
+        }
+        const task = request
+          .then((prompts) => {
+            const live = inflight !== null && inflight.gen === gen
+            if (!live || deps.getSessionId() !== sessionId) return null
+            inflight = null
+            failure = null
+            const tail = currentRows()
+            if (prompts.length < tail.length) {
+              // The log is shorter than the transcript (a row the export has
+              // not caught up with yet) — cannot be aligned; back off rather
+              // than re-download on the next hover.
+              failure = { sessionId, until: deps.now() + 2000, backoff: 2000 }
+              return null
+            }
+            cache = {
+              sessionId,
+              prompts,
+              lastKey: tail.length === 0 ? undefined : tail[tail.length - 1].key,
+            }
+            return prompts
+          }, () => {
+            const live = inflight !== null && inflight.gen === gen
+            if (live) inflight = null
+            if (live && deps.getSessionId() === sessionId) {
+              const backoff = failure !== null && failure.sessionId === sessionId
+                ? Math.min(failure.backoff * 2, 30000)
+                : 2000
+              failure = { sessionId, until: deps.now() + backoff, backoff }
+            }
+            return null
+          })
+        inflight = { sessionId, gen, controller, task }
+        return { prompts: partial, complete: false, pending: task }
+      }
+
+      /**
+       * The session moved on (or the surface is going away): retire the
+       * request and drop a cache that no longer belongs to the stage.
+       * @param sessionId - the session now current (undefined = all).
+       */
+      const invalidate = (sessionId) => {
+        if (inflight !== null && inflight.sessionId !== sessionId) abortInflight()
+        if (cache !== null && cache.sessionId !== sessionId) cache = null
+        if (failure !== null && failure.sessionId !== sessionId) failure = null
+      }
+
+      return {
+        get,
+        invalidate,
+        dispose: () => {
+          abortInflight()
+          cache = null
+        },
+        peek: () => cache,
+      }
+    }
+
+    /** Safety cap on pages per chain — reported, never silently swallowed. */
+    const LOAD_PAGE_CAP = 60
+    /** How long one page may take before the chain calls it stalled. */
+    const LOAD_PAGE_TIMEOUT = 5000
+
+    /**
+     * The one owner of "load older history" work. Auto-paging near the top,
+     * a zoom that needs more session on hand and a wall jump above the
+     * loaded window all run through here, so there is one task at a time,
+     * one cancel, and a status that says whether the goal was reached.
+     * @param deps - `{ button(), height(), now(), wait(ms), onPage(grown) }`.
+     * @returns `{ run(kind, need, onProgress), cancel(), active() }`.
+     */
+    function createHistoryLoader(deps) {
+      let gen = 0
+      let active = null
+
+      /**
+       * Page until `need()` turns false.
+       * @param kind - 'auto' | 'zoom' | 'jump' (for the status line).
+       * @param need - whether another page is still wanted.
+       * @param onProgress - `(pages)` after each landed page.
+       * @returns `{ status, pages }` — status is 'done' | 'stalled' |
+       *   'capped' | 'exhausted' | 'cancelled'.
+       */
+      const run = async (kind, need, onProgress) => {
+        gen += 1
+        const mine = gen
+        let pages = 0
+        const finish = (status) => {
+          if (active !== null && active.gen === mine) active = null
+          return { status, pages }
+        }
+        const task = (async () => {
+          while (need()) {
+            if (pages >= LOAD_PAGE_CAP) return finish('capped')
+            const el = deps.button()
+            if (el === null || el === undefined) return finish('exhausted')
+            const before = deps.height()
+            const started = deps.now()
+            el.click()
+            while (deps.height() === before && deps.now() - started < LOAD_PAGE_TIMEOUT) {
+              await deps.wait(150)
+              if (mine !== gen) return finish('cancelled')
+            }
+            if (mine !== gen) return finish('cancelled')
+            const grown = deps.height() - before
+            // No progress on a page is a terminal fault, not a reason to
+            // click sixty more times.
+            if (grown <= 0) return finish('stalled')
+            pages += 1
+            deps.onPage(grown)
+            if (onProgress !== undefined) onProgress(pages)
+            if (mine !== gen) return finish('cancelled')
+          }
+          return finish('done')
+        })()
+        active = { kind, gen: mine, task }
+        return task
+      }
+      const cancel = () => {
+        gen += 1
+        active = null
+      }
+      return { run, cancel, active: () => active }
+    }
+
     /**
      * Mount the imperative minimap engine onto the slot entry's root element.
      *
-     * Everything below the React seam is plain DOM: the map re-reads layout on
-     * scroll and mutation, and a canvas keeps repaints off the layout path
-     * while a turn streams.
+     * Everything below the React seam is plain DOM: the map re-reads layout
+     * when rows appear, leave or change size, and a canvas keeps repaints
+     * off the layout path while a turn streams.
      * @param root - the entry's own element (already in the overlay layer).
+     * @param getSessionId - reads the staged session id.
+     * @param subscribeSessions - subscribes to session-list changes.
      * @returns disposer removing every listener, observer and timer.
      */
-    function mountMinimap(root, getSessionId) {
+    function mountMinimap(root, getSessionId, subscribeSessions) {
       const doc = root.ownerDocument
       const T = dictionary()
 
@@ -551,6 +1014,7 @@ window.__ModuleLoader__.load({
       rail.setAttribute('aria-orientation', 'vertical')
       rail.setAttribute('aria-valuemin', '0')
       rail.setAttribute('aria-valuemax', '100')
+      rail.setAttribute('aria-label', T.railLabel)
       rail.tabIndex = 0
       const canvas = doc.createElement('canvas')
       canvas.className = 'dsh-strata-canvas'
@@ -565,6 +1029,8 @@ window.__ModuleLoader__.load({
       lens.className = 'dsh-strata-lens'
       const zoomer = doc.createElement('div')
       zoomer.className = 'dsh-strata-zoom'
+      zoomer.setAttribute('role', 'group')
+      zoomer.setAttribute('aria-label', T.zoomGroup)
       const ZOOMS = [
         { mode: 'init', glyph: '近', title: T.zoomInit },
         { mode: 'mid', glyph: '中', title: T.zoomMid },
@@ -576,6 +1042,7 @@ window.__ModuleLoader__.load({
         button.dataset.zoom = z.mode
         button.textContent = z.glyph
         button.title = z.title
+        button.setAttribute('aria-label', z.title)
         zoomer.append(button)
       }
       const loadbar = doc.createElement('div')
@@ -592,8 +1059,10 @@ window.__ModuleLoader__.load({
       // which would re-anchor position:fixed to itself.
       const wall = doc.createElement('div')
       wall.className = 'dsh-strata-wall'
+      wall.setAttribute('role', 'region')
       const wallLink = doc.createElementNS('http://www.w3.org/2000/svg', 'svg')
       wallLink.setAttribute('class', 'dsh-strata-walllink')
+      wallLink.setAttribute('aria-hidden', 'true')
       const wallHead = doc.createElement('div')
       wallHead.className = 'dsh-strata-wallhead'
       const wallTitle = doc.createElement('div')
@@ -618,17 +1087,21 @@ window.__ModuleLoader__.load({
       root.append(anchorsEl, rail, zoomer)
 
       const g = canvas.getContext('2d')
+      const thumb = createThumbSuppressor(THUMB_VARS)
 
       let scroller = null
       let bands = []
+      /** Row element -> its band, for the incremental resize path. */
+      let bandByEl = new Map()
       let userBandIndex = []
       // Map scale: 'all' spans the whole loaded session, 'init' restores the
-      // extent at session open, 'mid' half the session. Zoomed windows slide
-      // with the reading position and are immune to prepend rescaling.
+      // extent at session open, 'mid' twice that. Zoomed windows slide with
+      // the reading position and are immune to prepend rescaling.
       const ZOOM_KEY = 'dsh-strata.zoom'
       let zoomMode = 'init'
       let initialExtent = 0
       let initialSession
+      let currentSession
       try {
         const saved = window.localStorage.getItem(ZOOM_KEY)
         if (saved === 'init' || saved === 'mid' || saved === 'all') zoomMode = saved
@@ -639,15 +1112,21 @@ window.__ModuleLoader__.load({
       let anchorEntries = []
       let anchorSignature = ''
       let activeAnchor = -1
-      let thumbHidden = false
       let userTotal = 0
       let contentHeight = 1
       let railH = 0
       let railW = REST_W_MIN
+      let lineHeight = 16
+      let seatEl = null
       let structureDirty = true
+      let layoutDirty = true
+      /** Rows the ResizeObserver reported since the last frame -> new height. */
+      const resizedRows = new Map()
+      let observedRows = new WeakSet()
       let lastScrollHeight = -1
       let hoverIndex = -1
-      let dragging = false
+      /** Drag gesture on the rail, window frozen at pointerdown. */
+      let drag = null
       let expanded = false
       let pinned = false
       let frame = 0
@@ -671,9 +1150,75 @@ window.__ModuleLoader__.load({
         structureDirty = true
         schedule()
       }
+      const markLayout = () => {
+        layoutDirty = true
+        schedule()
+      }
 
-      const resizeObserver = new ResizeObserver(markDirty)
-      const flowObserver = new MutationObserver(markDirty)
+      // Scrollport: its size reflows every row, so re-measure. The composer
+      // seat only moves the rail's floor, so it gets a layout pass alone.
+      const resizeObserver = new ResizeObserver(() => {
+        layoutDirty = true
+        markDirty()
+      })
+      const seatObserver = new ResizeObserver(markLayout)
+      // Individual flow rows: a streaming reply grows its own row every
+      // frame, and the observer hands over the new border-box height, so
+      // the map updates that ONE band and shifts the rest arithmetically —
+      // no rect is read.
+      const rowObserver = new ResizeObserver((entries) => {
+        for (const entry of entries) {
+          const box = entry.borderBoxSize && entry.borderBoxSize.length > 0
+            ? entry.borderBoxSize[0].blockSize
+            : entry.contentRect.height
+          resizedRows.set(entry.target, box)
+        }
+        schedule()
+      })
+      const ROW_SEL = '[data-chat-anchor-key]'
+      const ERROR_SEL = '[data-state="error"], [data-error]'
+      const carriesRow = (node) => node instanceof Element
+        && (node.matches(ROW_SEL) || node.querySelector(ROW_SEL) !== null)
+      const carriesError = (node) => node instanceof Element
+        && (node.matches(ERROR_SEL) || node.querySelector(ERROR_SEL) !== null)
+      // Structure changes (rows added, removed, re-kinded, failing; the pager
+      // appearing or going) rebuild; text churn INSIDE a row does not — its
+      // only geometric effect is a height change, which the row observer
+      // reports.
+      const flowObserver = new MutationObserver((records) => {
+        let structural = false
+        for (const record of records) {
+          const target = record.target
+          const row = target instanceof Element ? target.closest(ROW_SEL) : null
+          if (record.type === 'attributes') {
+            const band = row === null ? undefined : bandByEl.get(row)
+            if (band === undefined || band.error !== (row.querySelector(ERROR_SEL) !== null)) {
+              structural = true
+              break
+            }
+            continue
+          }
+          if (row === null) {
+            structural = true
+            break
+          }
+          for (const node of record.addedNodes) {
+            if (carriesRow(node) || carriesError(node)) {
+              structural = true
+              break
+            }
+          }
+          if (structural) break
+          for (const node of record.removedNodes) {
+            if (carriesRow(node) || carriesError(node)) {
+              structural = true
+              break
+            }
+          }
+          if (structural) break
+        }
+        if (structural) markDirty()
+      })
       // The theme presenter writes resolved alias tokens onto body, so a theme
       // switch is an attribute mutation, not an event this plugin can hear.
       const themeObserver = new MutationObserver(() => {
@@ -695,12 +1240,18 @@ window.__ModuleLoader__.load({
         const found = doc.querySelector('[data-conversation-scroll]')
         if (found === scroller && found !== null && found.isConnected) return true
         if (scroller !== null) {
-          suppressNativeThumb(false)
+          thumb.release()
           scroller.removeEventListener('scroll', schedule)
           scroller.removeEventListener('wheel', releasePin)
           scroller.removeEventListener('pointerdown', releasePin)
           resizeObserver.disconnect()
+          seatObserver.disconnect()
+          rowObserver.disconnect()
           flowObserver.disconnect()
+          observedRows = new WeakSet()
+          bandByEl = new Map()
+          resizedRows.clear()
+          seatEl = null
         }
         scroller = found
         if (scroller === null) return false
@@ -708,8 +1259,14 @@ window.__ModuleLoader__.load({
         scroller.addEventListener('wheel', releasePin, { passive: true })
         scroller.addEventListener('pointerdown', releasePin, { passive: true })
         resizeObserver.observe(scroller)
-        flowObserver.observe(scroller, { childList: true, subtree: true, characterData: true })
+        flowObserver.observe(scroller, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['data-state', 'data-error', 'data-chat-flow-kind'],
+        })
         structureDirty = true
+        layoutDirty = true
         return true
       }
 
@@ -721,16 +1278,14 @@ window.__ModuleLoader__.load({
        * thumb pair to `transparent` is the documented seam for that and keeps
        * the gutter reserved, so nothing reflows. Handing it back on hide is
        * not optional: a view this map stands down on (Trajectory) must not be
-       * left with no scrollbar at all.
+       * left with no scrollbar at all — and it is handed back with whatever
+       * inline values were there before, not merely cleared.
        * @param on - whether the native thumb should be suppressed.
        */
       function suppressNativeThumb(on) {
-        if (scroller === null || on === thumbHidden) return
-        for (const name of THUMB_VARS) {
-          if (on) scroller.style.setProperty(name, 'transparent')
-          else scroller.style.removeProperty(name)
-        }
-        thumbHidden = on
+        if (scroller === null) return
+        if (on) thumb.hold(scroller)
+        else thumb.release()
       }
 
       /**
@@ -774,14 +1329,16 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Re-measure every flow row into content-space bands. Called on mutation
-       * and on scroll-height change, never on plain scroll.
+       * Re-measure every flow row into content-space bands. Called on
+       * structural change and on an unexplained scroll-height change, never
+       * on plain scroll or on in-row text churn.
        */
       function rebuild() {
         const scrollerRect = scroller.getBoundingClientRect()
         const scrollTop = scroller.scrollTop
-        const rows = scroller.querySelectorAll('[data-chat-anchor-key]')
+        const rows = scroller.querySelectorAll(ROW_SEL)
         const next = []
+        const byEl = new Map()
         let users = 0
         for (const row of rows) {
           const rect = row.getBoundingClientRect()
@@ -790,15 +1347,20 @@ window.__ModuleLoader__.load({
           const band = {
             el: row,
             kind,
+            index: next.length,
             top: rect.top - scrollerRect.top + scrollTop,
             height: rect.height,
+            // Border-box height as the ResizeObserver will report it (a
+            // transform in flight makes the rect differ); deltas are taken
+            // against this, never against the rect.
+            box: row.offsetHeight,
             // A failed tool or command marks its own row; the map borrows that
             // verdict rather than re-deriving one. `data-state` is the shared
             // convention (ToolRow, GenericCommandCard, StateDot) and the only
             // one that actually appears on a failed row — `data-error` exists
             // on inner IO text in a couple of renderers, so it is kept as a
             // secondary probe, never the primary one.
-            error: row.querySelector('[data-state="error"], [data-error]') !== null,
+            error: row.querySelector(ERROR_SEL) !== null,
             userIndex: -1,
           }
           if (isUserKind(kind)) {
@@ -808,8 +1370,20 @@ window.__ModuleLoader__.load({
           const tone = band.error && !isUserKind(kind) ? 'error' : ANCHOR_TONES[kind]
           if (tone !== undefined) band.anchorTone = tone
           next.push(band)
+          byEl.set(row, band)
+          if (!observedRows.has(row)) {
+            observedRows.add(row)
+            rowObserver.observe(row)
+          }
+        }
+        for (const el of bandByEl.keys()) {
+          if (byEl.has(el)) continue
+          rowObserver.unobserve(el)
+          observedRows.delete(el)
         }
         bands = next
+        bandByEl = byEl
+        resizedRows.clear()
         userTotal = users
         userBandIndex = []
         for (let index = 0; index < bands.length; index += 1) {
@@ -829,12 +1403,36 @@ window.__ModuleLoader__.load({
         }
         // Start the rescale morph in the SAME frame the growth lands: waiting
         // for the load poll would paint one hard frame of the end state first.
-        if (autoLoadLatched && nextHeight > contentHeight) {
+        if (loader.active() !== null && nextHeight > contentHeight) {
           startMorph(nextHeight - contentHeight)
         }
         contentHeight = nextHeight
         olderButton = findOlderButton(rows[0])
         older.dataset.available = olderButton === null ? '0' : '1'
+      }
+
+      /**
+       * Fold the rows' reported size changes into the bands without reading
+       * layout: the changed band takes its new height and every band below
+       * it shifts by the difference.
+       */
+      function applyResizes() {
+        let changed = false
+        for (const [el, height] of resizedRows) {
+          const band = bandByEl.get(el)
+          if (band === undefined) continue
+          const delta = height - band.box
+          if (Math.abs(delta) < 0.5) continue
+          band.box = height
+          band.height += delta
+          for (let i = band.index + 1; i < bands.length; i += 1) bands[i].top += delta
+          changed = true
+        }
+        resizedRows.clear()
+        if (!changed) return
+        contentHeight = Math.max(scroller.scrollHeight, 1)
+        canvasSignature = ''
+        anchorSignature = ''
       }
 
       /**
@@ -847,13 +1445,22 @@ window.__ModuleLoader__.load({
         const host = root.offsetParent || root.parentElement
         const hostRect = host === null ? { left: 0, top: 0 } : host.getBoundingClientRect()
         const seat = scroller.querySelector('[data-composer-seat]')
+        if (seat !== seatEl) {
+          if (seatEl !== null) seatObserver.unobserve(seatEl)
+          seatEl = seat
+          if (seat !== null) seatObserver.observe(seat)
+        }
         const floor = seat === null
           ? scrollerRect.bottom
           : Math.min(scrollerRect.bottom, seat.getBoundingClientRect().top - 6)
-        const barWidth = parseFloat(
-          window.getComputedStyle(doc.body).getPropertyValue('--dsh-scrollbar-width'),
-        )
+        const bodyStyle = window.getComputedStyle(doc.body)
+        const barWidth = parseFloat(bodyStyle.getPropertyValue('--dsh-scrollbar-width'))
         const gutter = Number.isFinite(barWidth) ? barWidth : 8
+        const scrollerStyle = window.getComputedStyle(scroller)
+        const lh = parseFloat(scrollerStyle.lineHeight)
+        lineHeight = Number.isFinite(lh) && lh > 0
+          ? lh
+          : (parseFloat(scrollerStyle.fontSize) || 13.5) * 1.2
         const top = scrollerRect.top + PAD
         // The rail sits IN the scrollbar's own gutter (it replaces the thumb),
         // widening leftwards over the transcript's padding while hovered.
@@ -875,13 +1482,25 @@ window.__ModuleLoader__.load({
        * user turn, plus every failure and compaction boundary. Dots that would
        * collide are dropped — except failures and boundaries, which are the
        * reason someone reaches for the map in the first place.
+       * @param view - this frame's display mapping.
        */
-      function syncAnchors() {
+      function syncAnchors(view) {
         const kept = []
         let lastY = -Infinity
-        const view = viewParams()
-        for (const index of anchorCandidates) {
+        const lo = view.offset - 6 / view.k
+        const hi = view.offset + (railH + 6) / view.k
+        // Candidates are ascending band indices; skip straight to the window.
+        let from = 0
+        let to = anchorCandidates.length
+        while (from < to) {
+          const m = (from + to) >> 1
+          if (bands[anchorCandidates[m]].top < lo) from = m + 1
+          else to = m
+        }
+        for (let c = from; c < anchorCandidates.length; c += 1) {
+          const index = anchorCandidates[c]
           const band = bands[index]
+          if (band.top > hi) break
           const y = (band.top - view.offset) * view.k
           if (y < -6 || y > railH + 6) continue
           if (y - lastY < ANCHOR_MIN_GAP && band.anchorTone === 'user') continue
@@ -930,11 +1549,6 @@ window.__ModuleLoader__.load({
        * and `height` (the displayed content height, easing to the real one).
        */
       let morph = null
-
-      /**
-       * Current display mapping, morph-aware.
-       * @returns `offset` in content px and `k` (rail px per content px).
-       */
       /** Easing state for a zoom-mode switch: from -> current target. */
       let zoomAnim = null
 
@@ -943,21 +1557,19 @@ window.__ModuleLoader__.load({
        * @returns offset and extent in content px.
        */
       function targetWindow() {
-        let extent = contentHeight
-        if (zoomMode === 'init' && initialExtent > 0) {
-          extent = Math.min(contentHeight, initialExtent)
-        } else if (zoomMode === 'mid' && initialExtent > 0) {
-          // Twice the initial view — always a full step out from 近, loading
-          // the difference on demand when it is not in the window yet.
-          extent = Math.min(contentHeight, initialExtent * 2)
-        }
-        if (extent < contentHeight && scroller !== null) {
-          const center = scroller.scrollTop + scroller.clientHeight / 2
-          return { offset: clamp(center - extent / 2, 0, contentHeight - extent), extent }
-        }
-        return { offset: 0, extent: contentHeight }
+        return windowFor(
+          zoomMode, contentHeight, initialExtent,
+          scroller === null ? 0 : scroller.scrollTop,
+          scroller === null ? 0 : scroller.clientHeight,
+        )
       }
 
+      /**
+       * Current display mapping, morph-aware. Computed ONCE per frame and
+       * handed to every consumer, so the canvas, the dots, the lens and the
+       * hit test never disagree about where a band is.
+       * @returns `offset` in content px and `k` (rail px per content px).
+       */
       function viewParams() {
         const target = targetWindow()
         // A mode switch glides from the old window to the new one.
@@ -1014,11 +1626,11 @@ window.__ModuleLoader__.load({
        * Rail-space geometry of one band, with the floor its kind declares so a
        * one-line prompt never compresses to nothing.
        * @param band - measured band.
+       * @param view - display mapping.
        * @returns `{ y, h, spec }` in rail pixels.
        */
-      function geometryOf(band) {
+      function geometryOf(band, view) {
         const spec = SPECS[band.kind] || FALLBACK
-        const view = viewParams()
         return {
           y: (band.top - view.offset) * view.k,
           h: Math.max(spec.min, band.height * view.k),
@@ -1026,28 +1638,36 @@ window.__ModuleLoader__.load({
         }
       }
 
-      /** Repaint the band canvas; skipped while nothing that affects it changed. */
-      function paintCanvas() {
+      /**
+       * Repaint the band canvas; skipped while nothing that affects it
+       * changed. Only bands inside the display window are visited.
+       * @param view - display mapping.
+       */
+      function paintCanvas(view) {
         const tones = palette()
-        const signature = [
-          railW, railH, contentHeight, bands.length, hoverIndex, colorStamp,
-        ].join(':')
+        const ratio = window.devicePixelRatio || 1
+        const signature = canvasSignatureOf({
+          railW, railH, contentHeight, count: bands.length, hoverIndex, colorStamp,
+          zoomMode, offset: view.offset, k: view.k, dpr: ratio,
+        })
         if (signature === canvasSignature) return
         canvasSignature = signature
 
-        const ratio = window.devicePixelRatio || 1
         canvas.width = Math.max(1, Math.round(railW * ratio))
         canvas.height = Math.max(1, Math.round(railH * ratio))
         g.setTransform(ratio, 0, 0, ratio, 0, 0)
         g.clearRect(0, 0, railW, railH)
 
+        // The window plus the tallest floor a band can wear, in content px.
+        const slack = 8 / view.k
+        const range = visibleRange(bands, view.offset - slack, view.offset + railH / view.k + slack)
         // Two passes: the agent's work first, the user's turns over the top,
         // so an emphasised band is never buried by a long reply behind it.
         for (let pass = 0; pass < 2; pass += 1) {
-          for (let index = 0; index < bands.length; index += 1) {
+          for (let index = range.start; index <= range.end; index += 1) {
             const band = bands[index]
             if ((pass === 0) === isUserKind(band.kind)) continue
-            const { y, h: height, spec } = geometryOf(band)
+            const { y, h: height, spec } = geometryOf(band, view)
             if (y + height < -4 || y > railH + 4) continue
             const hovered = index === hoverIndex
             // Hover must not change the band's geometry — a size flick at this
@@ -1092,9 +1712,11 @@ window.__ModuleLoader__.load({
         g.globalAlpha = 1
       }
 
-      /** Move the viewport lens onto the current scroll position. */
-      function paintLens() {
-        const view = viewParams()
+      /**
+       * Move the viewport lens onto the current scroll position.
+       * @param view - display mapping.
+       */
+      function paintLens(view) {
         const viewport = scroller.clientHeight * view.k
         const height = Math.max(10, viewport)
         const y = clamp((scroller.scrollTop - view.offset) * view.k, 0, Math.max(0, railH - height))
@@ -1130,7 +1752,83 @@ window.__ModuleLoader__.load({
         if (!next) closeWall()
       }
 
-      let autoLoadLatched = false
+      /**
+       * The staged session moved: retire everything that belonged to the
+       * old one — its prompt list, any load chain still clicking, the wall.
+       */
+      function checkSession() {
+        const sid = getSessionId()
+        if (sid === currentSession) return
+        currentSession = sid
+        promptStore.invalidate(sid)
+        loader.cancel()
+        closeWall()
+        resetWall()
+        structureDirty = true
+      }
+
+      // ── history loading: one owner ───────────────────────────────────────
+      const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
+      const loader = createHistoryLoader({
+        button: () => olderButton,
+        height: () => (scroller === null || !scroller.isConnected ? -1 : scroller.scrollHeight),
+        now: () => Date.now(),
+        wait,
+        onPage: () => {
+          if (disposed || scroller === null || !scroller.isConnected) return
+          // Re-measure synchronously so the chain's `need()` sees the landed
+          // page (userTotal, olderButton) before deciding on the next one.
+          rebuild()
+          lastScrollHeight = scroller.scrollHeight
+          structureDirty = false
+          canvasSignature = ''
+          schedule()
+        },
+      })
+      let loadEpoch = 0
+
+      /**
+       * Run a load chain with the rail's loading choreography: pulsing ⌃,
+       * progress bar, and an honest ending — 100% only when the goal was
+       * met, amber when the chain stalled, hit its cap or ran out of pager.
+       * @param kind - 'zoom' | 'jump'.
+       * @param need - whether another page is still wanted.
+       * @param progress - `(pages) => percent` for the bar.
+       * @returns the loader status.
+       */
+      async function runChain(kind, need, progress) {
+        loadEpoch += 1
+        const epoch = loadEpoch
+        root.dataset.loading = '1'
+        delete root.dataset.loadstate
+        loadbar.style.width = '6%'
+        const result = await loader.run(kind, need, (pages) => {
+          if (epoch !== loadEpoch) return
+          loadbar.style.width = clamp(Math.round(progress(pages)), 6, 99) + '%'
+        })
+        if (disposed || epoch !== loadEpoch) return result.status
+        if (result.status === 'cancelled' && loader.active() !== null) {
+          // Another chain took the bar over; it will land it.
+          return result.status
+        }
+        if (result.status === 'done') {
+          loadbar.style.width = '100%'
+          await wait(200)
+        } else if (result.status !== 'cancelled') {
+          root.dataset.loadstate = 'incomplete'
+          older.title = T.incomplete
+          await wait(1200)
+        }
+        if (disposed || epoch !== loadEpoch) return result.status
+        root.dataset.loading = '0'
+        delete root.dataset.loadstate
+        older.title = T.older
+        window.setTimeout(() => {
+          if (epoch === loadEpoch) loadbar.style.width = '0%'
+        }, 300)
+        return result.status
+      }
+
       let autoLoadChaining = false
       let lastAutoLoad = 0
       // A click-jump near the top must not fight the load chain: defer loads
@@ -1156,7 +1854,7 @@ window.__ModuleLoader__.load({
        * time; DSH's anchored prepend keeps the reading position.
        */
       function maybeAutoLoadOlder() {
-        if (autoLoadLatched || olderButton === null) return
+        if (loader.active() !== null || olderButton === null) return
         if (performance.now() < jumpHold) return
         const range = Math.max(1, scroller.scrollHeight - scroller.clientHeight)
         const ratio = scroller.scrollTop / range
@@ -1167,32 +1865,26 @@ window.__ModuleLoader__.load({
         const now = Date.now()
         if (now - lastAutoLoad < 400) return
         lastAutoLoad = now
-        autoLoadLatched = true
-        const beforeHeight = scroller.scrollHeight
-        olderButton.click()
-        const poll = window.setInterval(() => {
-          if (disposed || scroller === null || !scroller.isConnected
-            || scroller.scrollHeight !== beforeHeight || Date.now() - now > 5000) {
-            window.clearInterval(poll)
-            const grown = scroller !== null && scroller.isConnected
-              ? scroller.scrollHeight - beforeHeight
-              : 0
-            if (grown > 0) {
-              autoLoadChaining = true
-              if (pinnedEl !== null && pinnedEl.isConnected && Date.now() < pinnedUntil) {
-                const drift = pinnedEl.getBoundingClientRect().top
-                  - scroller.getBoundingClientRect().top
-                  - scroller.clientHeight * 0.12
-                // DSH's own anchored prepend usually holds the row; correct
-                // only real drift, never nudge a row already in place.
-                if (Math.abs(drift) > 48) scroller.scrollTop += drift
-              }
+        let once = true
+        loader.run('auto', () => {
+          const wanted = once
+          once = false
+          return wanted
+        }).then((result) => {
+          if (disposed || scroller === null || !scroller.isConnected) return
+          if (result.pages > 0) {
+            autoLoadChaining = true
+            if (pinnedEl !== null && pinnedEl.isConnected && Date.now() < pinnedUntil) {
+              const drift = pinnedEl.getBoundingClientRect().top
+                - scroller.getBoundingClientRect().top
+                - scroller.clientHeight * 0.12
+              // DSH's own anchored prepend usually holds the row; correct
+              // only real drift, never nudge a row already in place.
+              if (Math.abs(drift) > 48) scroller.scrollTop += drift
             }
-            autoLoadLatched = false
-            structureDirty = true
-            schedule()
           }
-        }, 200)
+          markDirty()
+        })
       }
 
       /** The frame body: rebind, re-measure when dirty, then paint. */
@@ -1203,10 +1895,20 @@ window.__ModuleLoader__.load({
           setVisible(false)
           return
         }
-        if (structureDirty || scroller.scrollHeight !== lastScrollHeight) {
+        checkSession()
+        if (structureDirty) {
           rebuild()
           lastScrollHeight = scroller.scrollHeight
           structureDirty = false
+          canvasSignature = ''
+        } else if (resizedRows.size > 0) {
+          applyResizes()
+          lastScrollHeight = scroller.scrollHeight
+        } else if (scroller.scrollHeight !== lastScrollHeight) {
+          // Growth nobody reported (a row inserted without a structural
+          // mutation we recognised): fall back to a full measure.
+          rebuild()
+          lastScrollHeight = scroller.scrollHeight
           canvasSignature = ''
         }
         if (bands.length === 0 || contentHeight <= scroller.clientHeight * SHOW_RATIO) {
@@ -1214,34 +1916,37 @@ window.__ModuleLoader__.load({
           return
         }
         setVisible(true)
-        layout()
-        if (morph !== null || zoomAnim !== null) {
+        if (layoutDirty) {
+          layout()
+          layoutDirty = false
           canvasSignature = ''
-          anchorSignature = ''
         }
-        syncAnchors()
-        paintCanvas()
-        paintLens()
+        const animating = morph !== null || zoomAnim !== null
+        const view = viewParams()
+        syncAnchors(view)
+        paintCanvas(view)
+        paintLens(view)
         maybeAutoLoadOlder()
         if (wallOpen) updateWallLinks()
-        if (morph !== null || zoomAnim !== null) {
-          canvasSignature = ''
-          anchorSignature = ''
-          schedule()
-        }
+        if (animating) schedule()
       }
 
       /**
        * Hit-test the rail. User bands win ties: they are the thing the map is
-       * for, and a long reply overlaps every prompt inside it.
+       * for, and a long reply overlaps every prompt inside it. Only the bands
+       * around the pointer's content position are examined.
        * @param y - pointer offset within the rail.
+       * @param view - display mapping.
        * @returns band index, or -1.
        */
-      function bandAt(y) {
+      function bandAt(y, view) {
+        const at = view.offset + y / view.k
+        const slack = 8 / view.k
+        const range = visibleRange(bands, at - slack, at + slack)
         let best = -1
         let bestScore = Infinity
-        for (let index = 0; index < bands.length; index += 1) {
-          const { y: top, h: height } = geometryOf(bands[index])
+        for (let index = range.start; index <= range.end; index += 1) {
+          const { y: top, h: height } = geometryOf(bands[index], view)
           if (y < top - 2 || y > top + height + 2) continue
           const score = (isUserKind(bands[index].kind) ? 0 : 1000)
             + Math.abs(top + height / 2 - y)
@@ -1265,63 +1970,37 @@ window.__ModuleLoader__.load({
         return text.length > 220 ? text.slice(0, 220) + '…' : text
       }
 
-      /**
-       * Scroll a band into reading position and mark where it landed.
-       * @param index - band index.
-       */
       // ── clue wall: every user message, full screen ──────────────────────
       // The loaded window is a contiguous suffix of the append-only log, so
       // the LAST K user events map 1:1 in order onto the K user bands; the
-      // rest come from the export endpoint. Clicking a user dot opens the
+      // rest come from the export endpoint. Hovering a user dot opens the
       // wall; clicking a card jumps (chain-loading first when the message
-      // sits above the loaded window); Esc / backdrop / ✕ close it.
-      let promptCache = null
-      let promptFetch = null
+      // sits above the loaded window); Esc / a gap click close it. Only the
+      // cards in (and just around) the visible window exist as DOM.
+      const WALL_BUFFER = 6
       let wallOpen = false
       let wallBusy = false
       let wallDom = null
       let wallFocusIdx = -1
-
-      /**
-       * Extract [{seq, time, text}] user prompts from one session-log text.
-       * @param text - the JSONL artifact.
-       * @returns prompts in log order.
-       */
-      function parsePrompts(text) {
-        const prompts = []
-        for (const line of text.split('\n')) {
-          if (line === '' || line.indexOf('"user/message"') === -1) continue
-          let event
-          try {
-            event = JSON.parse(line)
-          } catch {
-            continue
-          }
-          if (event.type !== 'user/message') continue
-          const data = event.data
-          if (data === undefined || (data.source && data.source.kind) !== 'user') continue
-          let body = ''
-          for (const block of data.content || []) {
-            if (block.type === 'text') body += block.text
-            else if (block.type === 'image') body += '🖼 '
-          }
-          prompts.push({ seq: event.seq, time: event.time, text: body.trim() })
-        }
-        return prompts
-      }
+      /** Current visible window [a, b] into the prompt list. */
+      let wallWin = { a: 0, b: -1 }
+      /** Persistent connector paths, keyed by prompt index. */
+      const wallPaths = new Map()
 
       /**
        * Fetch and inflate the session's full log through the export endpoint.
        * The ZIP's sizes live in the central directory (streaming writer), so
-       * the entry is located from there and inflated with deflate-raw.
-       * @param sessionId - current session.
+       * the entry is located from there and inflated with deflate-raw; the
+       * inflated text is parsed line by line as it streams.
+       * @param sessionId - session to export.
+       * @param signal - abort signal for the request.
        * @returns prompts in log order.
        */
-      async function fetchPrompts(sessionId) {
-        const res = await fetch('/api/session.export?sessionId=' + encodeURIComponent(sessionId))
+      async function fetchPrompts(sessionId, signal) {
+        const res = await fetch('/api/session.export?sessionId=' + encodeURIComponent(sessionId), { signal })
         if (!res.ok) throw new Error('export ' + res.status)
         const buf = new Uint8Array(await res.arrayBuffer())
-        const view = new DataView(buf.buffer)
+        const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
         let eocd = -1
         for (let i = buf.length - 22; i >= 0; i -= 1) {
           if (view.getUint32(i, true) === 0x06054b50) { eocd = i; break }
@@ -1330,7 +2009,7 @@ window.__ModuleLoader__.load({
         const count = view.getUint16(eocd + 10, true)
         let offset = view.getUint32(eocd + 16, true)
         for (let n = 0; n < count; n += 1) {
-          if (view.getUint32(offset, true) !== 0x02014b50) break
+          if (offset + 46 > buf.length || view.getUint32(offset, true) !== 0x02014b50) break
           const method = view.getUint16(offset + 10, true)
           const csize = view.getUint32(offset + 20, true)
           const nameLen = view.getUint16(offset + 28, true)
@@ -1339,97 +2018,167 @@ window.__ModuleLoader__.load({
           const localOffset = view.getUint32(offset + 42, true)
           const name = new TextDecoder().decode(buf.subarray(offset + 46, offset + 46 + nameLen))
           if (name === 'session.jsonl') {
+            if (localOffset + 30 > buf.length) throw new Error('truncated export')
             const lnl = view.getUint16(localOffset + 26, true)
             const lel = view.getUint16(localOffset + 28, true)
             const start = localOffset + 30 + lnl + lel
+            if (start + csize > buf.length) throw new Error('truncated export')
             const raw = buf.subarray(start, start + csize)
-            if (method === 0) return parsePrompts(new TextDecoder().decode(raw))
+            const parser = createPromptParser()
+            if (method === 0) {
+              parser.push(new TextDecoder().decode(raw))
+              return parser.end()
+            }
             const stream = new Blob([raw]).stream()
               .pipeThrough(new DecompressionStream('deflate-raw'))
-            return parsePrompts(await new Response(stream).text())
+            const reader = stream.getReader()
+            const decoder = new TextDecoder()
+            for (;;) {
+              const { value, done } = await reader.read()
+              if (done) break
+              if (signal !== undefined && signal.aborted) throw new Error('aborted')
+              parser.push(decoder.decode(value, { stream: true }))
+            }
+            parser.push(decoder.decode())
+            return parser.end()
           }
           offset += 46 + nameLen + extraLen + commentLen
         }
         throw new Error('session.jsonl not in export')
       }
 
+      const promptStore = createPromptStore({
+        fetchPrompts,
+        getSessionId,
+        now: () => Date.now(),
+      })
+
       /**
-       * Cached prompt list for the current session; refetches when the session
-       * changed or the loaded window has grown past the cached tail.
-       * @returns prompts, or null when unavailable (wall then shows loaded only).
+       * The loaded user rows as the prompt store wants them: a stable key
+       * per row, with the preview text read lazily (innerText forces layout,
+       * and the freshness test only needs the keys).
+       * @returns rows in transcript order.
        */
-      function ensurePrompts() {
-        const sessionId = getSessionId()
-        if (sessionId === undefined) return Promise.resolve(null)
-        if (promptCache !== null && promptCache.sessionId === sessionId
-          && promptCache.prompts.length >= userTotal) {
-          return Promise.resolve(promptCache.prompts)
+      function loadedRows() {
+        const rows = []
+        for (let u = 0; u < userBandIndex.length; u += 1) {
+          const band = bands[userBandIndex[u]]
+          rows.push({
+            key: band.el.dataset.chatAnchorKey || ('#' + u),
+            time: Number(band.el.dataset.time) || 0,
+            get text() {
+              return previewOf(band)
+            },
+          })
         }
-        if (promptFetch !== null && promptFetch.sessionId === sessionId) return promptFetch.task
-        const task = fetchPrompts(sessionId)
-          .then((prompts) => {
-            promptCache = { sessionId, prompts }
-            promptFetch = null
-            return prompts
-          })
-          .catch(() => {
-            promptFetch = null
-            return null
-          })
-        promptFetch = { sessionId, task }
-        return task
+        return rows
+      }
+
+      /** Drop the wall's DOM and state (session switch, dispose). */
+      function resetWall() {
+        wallCards.textContent = ''
+        wallLink.textContent = ''
+        wallPaths.clear()
+        wallDom = null
+        wallWin = { a: 0, b: -1 }
+        wallFocusIdx = -1
       }
 
       /**
-       * Fallback wall data straight from the loaded bands (export missing).
-       * @returns prompts covering only the loaded window.
-       */
-      function loadedPrompts() {
-        const prompts = []
-        for (const bandIdx of userBandIndex) {
-          const band = bands[bandIdx]
-          prompts.push({ seq: -1, time: band.el ? Number(band.el.dataset.time) || 0 : 0, text: previewOf(band) })
-        }
-        return prompts
-      }
-
-      /**
-       * Build (or reuse) the wall's card column for one prompt list.
+       * Bind the wall to one prompt list; a no-op when it already is.
        * @param prompts - the full prompt list.
        */
-      function buildWall(prompts) {
+      function setWallPrompts(prompts) {
         if (wallDom !== null && wallDom.prompts === prompts) return
-        wallCards.textContent = ''
-        const cards = []
-        for (let i = 0; i < prompts.length; i += 1) {
-          const prompt = prompts[i]
-          const el = doc.createElement('div')
-          el.className = 'dsh-strata-wallcard'
-          el.dataset.wallIndex = String(i)
-          const head = doc.createElement('div')
-          head.className = 'dsh-strata-wallcardhead'
-          const no = doc.createElement('span')
-          no.className = 'dsh-strata-wallno'
-          const meta = doc.createElement('span')
-          head.append(no, meta)
-          const body = doc.createElement('div')
-          body.className = 'dsh-strata-wallcardbody'
-          body.textContent = prompt.text === '' ? T.empty : prompt.text
-          el.append(head, body)
-          el.style.transition = 'none'
-          wallCards.append(el)
-          cards.push({ el, no, meta })
+        resetWall()
+        wallDom = {
+          prompts,
+          /** index -> { el, no, meta, fresh } for the cards that exist. */
+          cards: new Map(),
+          /** index -> measured height at the current column width. */
+          heights: new Map(),
+          colW: -1,
+          /** index -> last read viewport rect. */
+          rects: new Map(),
+          settleUntil: 0,
         }
-        wallDom = { prompts, cards }
-        wallWin = { a: 0, b: -1 }
-        window.requestAnimationFrame(() => {
-          if (wallDom === null || wallDom.cards !== cards) return
-          for (const cardRef of cards) cardRef.el.style.transition = ''
-        })
       }
 
-      /** Current visible window [a, b] into the prompt list. */
-      let wallWin = { a: 0, b: -1 }
+      /**
+       * The card element for one prompt, created on demand.
+       * @param i - prompt index.
+       * @returns the card ref.
+       */
+      function cardFor(i) {
+        let ref = wallDom.cards.get(i)
+        if (ref !== undefined) return ref
+        const prompt = wallDom.prompts[i]
+        const el = doc.createElement('div')
+        el.className = 'dsh-strata-wallcard'
+        el.dataset.wallIndex = String(i)
+        el.dataset.on = '0'
+        el.setAttribute('role', 'button')
+        el.tabIndex = 0
+        const head = doc.createElement('div')
+        head.className = 'dsh-strata-wallcardhead'
+        const no = doc.createElement('span')
+        no.className = 'dsh-strata-wallno'
+        const meta = doc.createElement('span')
+        head.append(no, meta)
+        const body = doc.createElement('div')
+        body.className = 'dsh-strata-wallcardbody'
+        body.textContent = prompt.text === '' ? T.empty : prompt.text
+        el.append(head, body)
+        // Land silently; the swap spring only applies to LATER moves.
+        el.style.transition = 'none'
+        el.style.width = wallDom.colW + 'px'
+        wallCards.append(el)
+        ref = { el, no, meta, fresh: true }
+        wallDom.cards.set(i, ref)
+        return ref
+      }
+
+      /**
+       * Measured height of one card, measuring a small run of neighbours in
+       * the same direction at once so a window expansion costs one layout
+       * per batch rather than one per card.
+       * @param i - prompt index.
+       * @param dir - -1 growing upward, +1 downward.
+       * @returns height in px.
+       */
+      function heightOf(i, dir) {
+        const known = wallDom.heights.get(i)
+        if (known !== undefined) return known
+        const total = wallDom.prompts.length
+        const from = dir < 0 ? Math.max(0, i - WALL_BUFFER) : i
+        const to = dir < 0 ? i : Math.min(total - 1, i + WALL_BUFFER)
+        const pending = []
+        for (let j = from; j <= to; j += 1) {
+          if (!wallDom.heights.has(j)) pending.push(j)
+        }
+        for (const j of pending) cardFor(j)
+        for (const j of pending) wallDom.heights.set(j, wallDom.cards.get(j).el.offsetHeight)
+        return wallDom.heights.get(i)
+      }
+
+      /**
+       * Drop cards (and their strings) far outside the window.
+       * @param a - window start.
+       * @param b - window end.
+       */
+      function pruneCards(a, b) {
+        for (const [i, ref] of wallDom.cards) {
+          if (i >= a - WALL_BUFFER && i <= b + WALL_BUFFER) continue
+          ref.el.remove()
+          wallDom.cards.delete(i)
+          wallDom.rects.delete(i)
+          const path = wallPaths.get(i)
+          if (path !== undefined) {
+            path.remove()
+            wallPaths.delete(i)
+          }
+        }
+      }
 
       /**
        * The focus card's anchor-side slot: rightmost column, vertically
@@ -1450,35 +2199,38 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Pack heights[a..b] into masonry columns. The focused card claims the
+       * Pack cards a..b into masonry columns. The focused card claims the
        * slot NEAREST its anchor — rightmost column, centred on the dot — and
-       * the rest flow chronologically around the reservation.
-       * @param heights - measured card heights.
+       * the rest flow chronologically around the reservation. Bounded by
+       * the on-screen window (a few dozen cards at most), never by the
+       * session, so a from-scratch pass per probe stays trivial.
+       * @param heightAt - `(i) => px` for cards in the window.
        * @param a - window start.
        * @param b - window end (inclusive).
        * @param geometry - {cols, colW, gap, areaH, anchorY} for this pass.
        * @param place - card placement sink (i, left, top), or null to only measure.
        * @returns tallest column height.
        */
-      function packWindow(heights, a, b, geometry, place) {
+      function packWindow(heightAt, a, b, geometry, place) {
         const { cols, colW, gap, areaH, anchorY } = geometry
         const col = new Array(cols).fill(0)
         let reserved = null
         const focus = wallFocusIdx
         if (focus >= a && focus <= b && anchorY !== null && cols > 1) {
-          const h = heights[focus]
+          const h = heightAt(focus)
           const top = clamp(anchorY - h / 2, 0, Math.max(0, areaH - h))
           reserved = { top: top - gap, bottom: top + h + gap }
           if (place !== null) place(focus, (cols - 1) * (colW + gap), top)
         }
         for (let i = a; i <= b; i += 1) {
           if (reserved !== null && i === focus) continue
+          const h = heightAt(i)
           let best = -1
           let bestY = Infinity
           for (let c = 0; c < cols; c += 1) {
             let y = col[c]
             if (reserved !== null && c === cols - 1
-              && y + heights[i] > reserved.top && y < reserved.bottom) {
+              && y + h > reserved.top && y < reserved.bottom) {
               y = reserved.bottom
             }
             if (y < bestY) {
@@ -1487,7 +2239,7 @@ window.__ModuleLoader__.load({
             }
           }
           if (place !== null) place(i, best * (colW + gap), bestY)
-          col[best] = bestY + heights[i] + gap
+          col[best] = bestY + h + gap
         }
         let max = Math.max(...col)
         if (reserved !== null) max = Math.max(max, reserved.bottom - gap)
@@ -1498,7 +2250,8 @@ window.__ModuleLoader__.load({
        * Lay the wall out as a packed collage. Cards take exactly the height
        * their content needs; the window holds as many as genuinely fit; the
        * spotlight card always lands nearest its anchor, and position changes
-       * animate as swaps.
+       * animate as swaps. Only the window (plus a small buffer) exists as
+       * DOM; heights are cached per column width.
        * @param mode - 'around' the focus (default), 'up' ending at anchor,
        *   'down' starting at anchor, or 'keep' the current window.
        * @param anchor - window anchor index for 'up'/'down'.
@@ -1508,16 +2261,18 @@ window.__ModuleLoader__.load({
         const prompts = wallDom.prompts
         const total = prompts.length
         wallTitle.textContent = T.wallTitle.replace('{n}', String(total))
+        wall.setAttribute('aria-label', wallTitle.textContent)
         wallHint.textContent = T.wallHint
+        // The pagers always occupy their rows (visibility, not display), so
+        // this measure is the area the cards will really have.
         const area = wallCards.getBoundingClientRect()
         const gap = 10
         const cols = clamp(Math.round(area.width / 230), 1, 3)
         const colW = Math.floor((area.width - gap * (cols - 1)) / cols)
-        const heights = new Array(total)
-        for (let i = 0; i < total; i += 1) {
-          const { el } = wallDom.cards[i]
-          el.style.width = colW + 'px'
-          heights[i] = el.offsetHeight
+        if (colW !== wallDom.colW) {
+          wallDom.colW = colW
+          wallDom.heights.clear()
+          for (const ref of wallDom.cards.values()) ref.el.style.width = colW + 'px'
         }
         const geometry = {
           cols,
@@ -1526,55 +2281,86 @@ window.__ModuleLoader__.load({
           areaH: area.height - 4,
           anchorY: wallAnchorLocalY(area.top),
         }
-        const fits = (a, b) => packWindow(heights, a, b, geometry, null) <= geometry.areaH
+        const heightAt = (i) => heightOf(i, 1)
+        const fits = (a, b, dir) => {
+          heightOf(dir < 0 ? a : b, dir)
+          return packWindow(heightAt, a, b, geometry, null) <= geometry.areaH
+        }
         let a
         let b
-        if (mode === 'keep' && wallWin.b >= wallWin.a) {
+        if (total === 0) {
+          a = 0
+          b = -1
+        } else if (mode === 'keep' && wallWin.b >= wallWin.a) {
           a = clamp(wallWin.a, 0, total - 1)
           b = clamp(wallWin.b, a, total - 1)
+          heightOf(a, 1)
+          heightOf(b, 1)
         } else if (mode === 'up') {
           // Page toward earlier cards, then BACKFILL the leftover room with
           // later ones — the window slides, it does not shrink; whatever no
           // longer fits moves to the bottom pager.
           b = clamp(anchor, 0, total - 1)
           a = b
-          while (a > 0 && fits(a - 1, b)) a -= 1
-          while (b < total - 1 && fits(a, b + 1)) b += 1
+          heightOf(b, -1)
+          while (a > 0 && fits(a - 1, b, -1)) a -= 1
+          while (b < total - 1 && fits(a, b + 1, 1)) b += 1
         } else if (mode === 'down') {
           a = clamp(anchor, 0, total - 1)
           b = a
-          while (b < total - 1 && fits(a, b + 1)) b += 1
-          while (a > 0 && fits(a - 1, b)) a -= 1
+          heightOf(a, 1)
+          while (b < total - 1 && fits(a, b + 1, 1)) b += 1
+          while (a > 0 && fits(a - 1, b, -1)) a -= 1
         } else {
           const focus = clamp(wallFocusIdx, 0, total - 1)
           a = focus
           b = focus
+          heightOf(focus, 1)
           let expand = true
           while (expand) {
             expand = false
-            if (a > 0 && fits(a - 1, b)) {
+            if (a > 0 && fits(a - 1, b, -1)) {
               a -= 1
               expand = true
             }
-            if (b < total - 1 && fits(a, b + 1)) {
+            if (b < total - 1 && fits(a, b + 1, 1)) {
               b += 1
               expand = true
             }
           }
         }
         wallWin = { a, b }
-        for (let i = 0; i < total; i += 1) {
-          wallDom.cards[i].el.dataset.on = i >= a && i <= b ? '1' : '0'
+        for (const [i, ref] of wallDom.cards) {
+          ref.el.dataset.on = i >= a && i <= b ? '1' : '0'
         }
-        packWindow(heights, a, b, geometry, (i, left, top) => {
-          const { el } = wallDom.cards[i]
-          el.style.left = Math.round(left) + 'px'
-          el.style.top = Math.round(top) + 'px'
+        pruneCards(a, b)
+        const fresh = []
+        packWindow(heightAt, a, b, geometry, (i, left, top) => {
+          // A card whose height is cached may have been pruned since it was
+          // measured; it is re-created here, so the window flag is set on
+          // placement, not only in the sweep above.
+          const ref = cardFor(i)
+          ref.el.dataset.on = '1'
+          ref.el.style.left = Math.round(left) + 'px'
+          ref.el.style.top = Math.round(top) + 'px'
+          if (ref.fresh) fresh.push(ref)
         })
+        wallDom.rects.clear()
+        wallDom.settleUntil = performance.now() + 400
         wallPagerTop.dataset.on = a > 0 ? '1' : '0'
         wallPagerTop.textContent = T.pageUp.replace('{n}', String(a))
+        wallPagerTop.setAttribute('aria-hidden', a > 0 ? 'false' : 'true')
         wallPagerBottom.dataset.on = b < total - 1 ? '1' : '0'
         wallPagerBottom.textContent = T.pageDown.replace('{n}', String(total - 1 - b))
+        wallPagerBottom.setAttribute('aria-hidden', b < total - 1 ? 'false' : 'true')
+        if (fresh.length > 0) {
+          window.requestAnimationFrame(() => {
+            for (const ref of fresh) {
+              ref.fresh = false
+              ref.el.style.transition = ''
+            }
+          })
+        }
         restyleWall()
       }
 
@@ -1588,9 +2374,10 @@ window.__ModuleLoader__.load({
         const prompts = wallDom.prompts
         const total = prompts.length
         const loadedStart = Math.max(0, total - userTotal)
-        for (let i = 0; i < total; i += 1) {
-          const { el, no, meta } = wallDom.cards[i]
-          if (el.dataset.on !== '1') continue
+        for (let i = wallWin.a; i <= wallWin.b; i += 1) {
+          const ref = wallDom.cards.get(i)
+          if (ref === undefined) continue
+          const { el, no, meta } = ref
           el.dataset.loaded = i >= loadedStart ? '1' : '0'
           el.dataset.focus = i === wallFocusIdx ? '1' : '0'
           no.textContent = String(i + 1)
@@ -1599,30 +2386,46 @@ window.__ModuleLoader__.load({
             : ''
           meta.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
             + (i < loadedStart ? ' · ' + T.unloaded : '')
+          el.setAttribute('aria-label',
+            T.cardLabel.replace('{i}', String(i + 1)).replace('{n}', String(total))
+            + (prompts[i].text === '' ? T.empty : prompts[i].text)
+            + (i < loadedStart ? ' (' + T.unloaded + ')' : ''))
         }
-        updateWallLinks()
+        schedule()
       }
 
       /**
        * Bezier from every visible card's right edge to its anchor dot
        * (dashed toward the rail top for prompts above the loaded window).
        * Only the spotlight hangs by a solid string; every other card's is
-       * dashed and faint. Coordinates are re-read live so transcript
-       * scrolling keeps the lines attached.
+       * dashed and faint. Paths persist across frames — only their
+       * attributes change — and card rects are re-read only while a layout
+       * is still settling (the wall is fixed; transcript scrolling moves
+       * the dots, not the cards).
        */
       function updateWallLinks() {
         if (wallDom === null || !wallOpen) return
-        wallLink.textContent = ''
         const wallRect = wall.getBoundingClientRect()
         const railRect = rail.getBoundingClientRect()
         const total = wallDom.prompts.length
         const loadedStart = Math.max(0, total - userTotal)
         wallLink.setAttribute('width', String(Math.round(wallRect.width + 64)))
         wallLink.setAttribute('height', String(Math.round(wallRect.height)))
-        for (let i = 0; i < total; i += 1) {
-          const { el } = wallDom.cards[i]
-          if (el.dataset.on !== '1') continue
-          const cardRect = el.getBoundingClientRect()
+        const settling = performance.now() < wallDom.settleUntil
+        for (const [i, path] of wallPaths) {
+          if (i < wallWin.a || i > wallWin.b) {
+            path.remove()
+            wallPaths.delete(i)
+          }
+        }
+        for (let i = wallWin.a; i <= wallWin.b; i += 1) {
+          const ref = wallDom.cards.get(i)
+          if (ref === undefined) continue
+          let cardRect = wallDom.rects.get(i)
+          if (cardRect === undefined || settling) {
+            cardRect = ref.el.getBoundingClientRect()
+            wallDom.rects.set(i, cardRect)
+          }
           const startX = cardRect.right - wallRect.left
           const startY = cardRect.top + cardRect.height / 2 - wallRect.top
           let endX = wallRect.width + 60
@@ -1639,59 +2442,71 @@ window.__ModuleLoader__.load({
             }
           }
           const focused = i === wallFocusIdx
-          const path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
-          path.setAttribute('fill', 'none')
-          path.setAttribute('stroke', 'var(--dsh-strata-user)')
+          let path = wallPaths.get(i)
+          if (path === undefined) {
+            path = doc.createElementNS('http://www.w3.org/2000/svg', 'path')
+            path.setAttribute('fill', 'none')
+            path.setAttribute('stroke', 'var(--dsh-strata-user)')
+            wallLink.append(path)
+            wallPaths.set(i, path)
+          }
           path.setAttribute('stroke-width', focused ? '1.5' : '1')
           path.setAttribute('stroke-opacity', focused ? '0.85' : '0.3')
           // The spotlight is the ONLY solid string; every other card hangs
           // by a dashed one.
-          if (!focused) path.setAttribute('stroke-dasharray', '4 4')
+          if (focused) path.removeAttribute('stroke-dasharray')
+          else path.setAttribute('stroke-dasharray', '4 4')
           const midX = (startX + endX) / 2
           path.setAttribute('d',
             'M ' + Math.round(startX) + ' ' + Math.round(startY)
             + ' C ' + Math.round(midX) + ' ' + Math.round(startY)
             + ', ' + Math.round(midX) + ' ' + Math.round(endY)
             + ', ' + Math.round(endX) + ' ' + Math.round(endY))
-          wallLink.append(path)
         }
+        if (settling) schedule()
       }
 
       /**
        * Open (or refocus) the wall on one LOADED user message; the window
-       * centres on it.
+       * centres on it. The prompt list comes from the session-scoped store:
+       * the loaded rows at once, the full log when it lands — and only if
+       * the stage is still the session that was asked for.
        * @param userIdx - index among the loaded user bands.
+       * @param focus - move keyboard focus onto the spotlight card.
        */
-      function openWall(userIdx) {
+      function openWall(userIdx, focus) {
         if (wallBusy) return
+        const sessionId = getSessionId()
         wallOpen = true
         cancelWallClose()
         const spotlight = (prompts) => {
-          buildWall(prompts)
+          setWallPrompts(prompts)
           wall.dataset.show = '1'
           wallFocusIdx = clamp(
             Math.max(0, prompts.length - userTotal) + userIdx, 0, prompts.length - 1)
           layoutWall('around')
+          if (focus === true) {
+            const ref = wallDom.cards.get(wallFocusIdx)
+            if (ref !== undefined) ref.el.focus({ preventScroll: true })
+          }
         }
-        if (promptCache !== null && wallDom !== null
-          && promptCache.prompts === wallDom.prompts
-          && wallDom.prompts.length >= userTotal) {
-          spotlight(wallDom.prompts)
-          return
-        }
-        spotlight(loadedPrompts())
-        ensurePrompts().then((prompts) => {
-          if (!wallOpen || prompts === null) return
+        const result = promptStore.get(sessionId, loadedRows(), loadedRows)
+        spotlight(result.prompts)
+        if (result.pending === null) return
+        result.pending.then((prompts) => {
+          if (disposed || !wallOpen || prompts === null) return
+          if (getSessionId() !== sessionId) return
           if (wallDom !== null && wallDom.prompts === prompts) return
           spotlight(prompts)
         })
       }
 
-      /** Close the wall. */
+      /** Close the wall; keyboard focus returns to the rail if it was inside. */
       function closeWall() {
         if (!wallOpen) return
         wallOpen = false
         wall.dataset.show = '0'
+        if (wall.contains(doc.activeElement)) rail.focus({ preventScroll: true })
       }
 
       let wallCloseTimer = 0
@@ -1721,9 +2536,9 @@ window.__ModuleLoader__.load({
         if (wallDom === null || wallBusy) return
         const prompts = wallDom.prompts
         if (prompts[i] === undefined) return
-        let loadedStart = Math.max(0, prompts.length - userTotal)
-        if (i >= loadedStart) {
-          const bandIdx = userBandIndex[i - loadedStart]
+        const loadedStartNow = () => Math.max(0, prompts.length - userTotal)
+        if (i >= loadedStartNow()) {
+          const bandIdx = userBandIndex[i - loadedStartNow()]
           closeWall()
           if (bandIdx !== undefined) jumpTo(bandIdx)
           return
@@ -1733,47 +2548,20 @@ window.__ModuleLoader__.load({
         // trigger anyway), and only then the glide-and-flash jump plays.
         wallBusy = true
         closeWall()
-        root.dataset.loading = '1'
-        loadbar.style.width = '6%'
-        const startLoaded = loadedStart
-        for (let guard = 0; guard < 60 && i < loadedStart; guard += 1) {
-          if (olderButton === null || autoLoadLatched) break
-          autoLoadLatched = true
-          const beforeHeight = scroller.scrollHeight
-          const startedAt = Date.now()
-          olderButton.click()
-          await new Promise((resolve) => {
-            const poll = window.setInterval(() => {
-              if (disposed || scroller.scrollHeight !== beforeHeight
-                || Date.now() - startedAt > 5000) {
-                window.clearInterval(poll)
-                resolve()
-              }
-            }, 150)
+        const startLoaded = loadedStartNow()
+        let status = 'cancelled'
+        try {
+          status = await runChain('jump', () => i < loadedStartNow(), () => {
+            // Real progress: user rows landed over user rows needed.
+            const fraction = clamp(
+              (startLoaded - loadedStartNow()) / Math.max(1, startLoaded - i), 0, 1)
+            return 6 + fraction * 94
           })
-          if (disposed) return
-          if (scroller.scrollHeight > beforeHeight) startMorph(scroller.scrollHeight - beforeHeight)
-          autoLoadLatched = false
-          structureDirty = true
-          rebuild()
-          lastScrollHeight = scroller.scrollHeight
-          structureDirty = false
-          schedule()
-          loadedStart = Math.max(0, prompts.length - userTotal)
-          // Real progress: chunks landed over chunks needed.
-          const fraction = clamp(
-            (startLoaded - loadedStart) / Math.max(1, startLoaded - i), 0, 1)
-          loadbar.style.width = Math.round(6 + fraction * 94) + '%'
+        } finally {
+          wallBusy = false
         }
-        loadbar.style.width = '100%'
-        // Let the bar land, then hand the stage to the glide.
-        await new Promise((resolve) => window.setTimeout(resolve, 200))
-        root.dataset.loading = '0'
-        wallBusy = false
-        window.setTimeout(() => {
-          loadbar.style.width = '0%'
-        }, 300)
-        const bandIdx = userBandIndex[i - loadedStart]
+        if (disposed || status !== 'done') return
+        const bandIdx = userBandIndex[i - loadedStartNow()]
         if (bandIdx !== undefined) jumpTo(bandIdx)
       }
 
@@ -1799,23 +2587,36 @@ window.__ModuleLoader__.load({
         // A click in the gaps (the transcript shows through) closes the wall.
         closeWall()
       }
-      const onWallOver = (event) => {
-        const i = wallIndexOf(event.target)
-        if (i === -1 || i === wallFocusIdx) return
+      /**
+       * Spotlight the card under the pointer (or the one that took focus).
+       * @param target - event target.
+       */
+      const spotlightCard = (target) => {
+        const i = wallIndexOf(target)
+        if (i === -1 || i === wallFocusIdx || wallDom === null) return
         wallFocusIdx = i
         // Light the mapped band on the rail too.
         const loadedStart = Math.max(0, wallDom.prompts.length - userTotal)
         if (i >= loadedStart && userBandIndex[i - loadedStart] !== undefined) {
           hoverIndex = userBandIndex[i - loadedStart]
           canvasSignature = ''
-          schedule()
         }
         restyleWall()
       }
+      const onWallOver = (event) => spotlightCard(event.target)
+      const onWallFocus = (event) => spotlightCard(event.target)
       const onWallKey = (event) => {
-        if (event.key === 'Escape' && wallOpen) {
+        if (!wallOpen) return
+        if (event.key === 'Escape') {
           event.stopPropagation()
           closeWall()
+          return
+        }
+        if ((event.key === 'Enter' || event.key === ' ') && wall.contains(event.target)) {
+          const i = wallIndexOf(event.target)
+          if (i === -1) return
+          event.preventDefault()
+          wallJump(i)
         }
       }
       const onPageUp = () => {
@@ -1826,6 +2627,7 @@ window.__ModuleLoader__.load({
       }
       wall.addEventListener('click', onWallClick)
       wall.addEventListener('mouseover', onWallOver)
+      wall.addEventListener('focusin', onWallFocus)
       wall.addEventListener('pointerenter', cancelWallClose)
       wall.addEventListener('pointerleave', scheduleWallClose)
       wallPagerTop.addEventListener('click', onPageUp)
@@ -1850,8 +2652,13 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /**
+       * Scroll a band into reading position and flash where it landed.
+       * @param index - band index.
+       */
       function jumpTo(index) {
         const band = bands[index]
+        if (band === undefined) return
         const target = Math.max(0, band.top - scroller.clientHeight * 0.12)
         escapeFollow(target)
         // Hold auto-load until the glide lands; smooth-scroll time grows with
@@ -1875,14 +2682,15 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Proportional scrub: the lens centre follows the pointer.
+       * Proportional scrub against the window frozen at pointerdown: the
+       * lens centre follows the pointer, and one pixel of pointer travel is
+       * always the same one pixel of rail.
        * @param y - pointer offset within the rail.
        */
-      function scrub(y) {
+      function scrubTo(y) {
+        if (drag === null) return
         releasePin()
-        const view = viewParams()
-        scroller.scrollTop = view.offset + clamp(y / railH, 0, 1) * (railH / view.k)
-          - scroller.clientHeight / 2
+        scroller.scrollTop = scrubTarget(drag, y, railH, scroller.clientHeight)
       }
 
       /**
@@ -1906,15 +2714,14 @@ window.__ModuleLoader__.load({
         cancelCollapse()
         expanded = true
         root.dataset.expanded = '1'
-        canvasSignature = ''
-        schedule()
+        markLayout()
       }
       // Grace-period collapse: the older cap sits above the rail and the dots
       // beside it, so the pointer legitimately grazes past the root's edge on
       // the way to both. Collapsing on a timer instead of on the boundary
       // event keeps the surface up through the crossing; re-entry cancels.
       const onLeave = () => {
-        if (dragging) return
+        if (drag !== null) return
         scheduleWallClose()
         if (collapseTimer !== 0) window.clearTimeout(collapseTimer)
         collapseTimer = window.setTimeout(() => {
@@ -1922,16 +2729,20 @@ window.__ModuleLoader__.load({
           expanded = pinned
           root.dataset.expanded = pinned ? '1' : '0'
           hoverIndex = -1
-          canvasSignature = ''
-          schedule()
+          markLayout()
         }, 300)
       }
+      /** Drag starts only past this much pointer travel — a click is a click. */
+      const DRAG_SLOP = 3
       const onMove = (event) => {
-        if (dragging) {
-          scrub(railY(event))
+        const y = railY(event)
+        if (drag !== null) {
+          if (!drag.moved && Math.abs(y - drag.startY) < DRAG_SLOP) return
+          drag.moved = true
+          scrubTo(y)
           return
         }
-        const index = bandAt(railY(event))
+        const index = bandAt(y, viewParams())
         if (index === hoverIndex) return
         hoverIndex = index
         canvasSignature = ''
@@ -1942,33 +2753,38 @@ window.__ModuleLoader__.load({
       }
       const onDown = (event) => {
         if (event.button !== 0) return
+        const view = viewParams()
         const y = railY(event)
-        const index = bandAt(y)
-        if (index === -1) scrub(y)
+        const index = bandAt(y, view)
+        // Freeze the display window for the whole gesture (see scrubTarget).
+        drag = { startY: y, offset: view.offset, extent: railH / view.k, moved: false }
+        if (index === -1) scrubTo(y)
         else jumpTo(index)
-        dragging = true
         rail.setPointerCapture(event.pointerId)
         event.preventDefault()
       }
       const onUp = (event) => {
-        if (!dragging) return
-        dragging = false
+        if (drag === null) return
+        drag = null
         if (rail.hasPointerCapture(event.pointerId)) rail.releasePointerCapture(event.pointerId)
       }
       const onWheel = (event) => {
-        scroller.scrollBy({ top: event.deltaY })
+        scroller.scrollBy({
+          top: wheelPixels(event.deltaY, event.deltaMode, lineHeight, scroller.clientHeight),
+        })
         event.preventDefault()
       }
       /** Reflect the active zoom on the switcher buttons. */
       function paintZoom() {
         for (const button of zoomer.children) {
-          button.dataset.active = button.dataset.zoom === zoomMode ? '1' : '0'
+          const on = button.dataset.zoom === zoomMode
+          button.dataset.active = on ? '1' : '0'
+          button.setAttribute('aria-pressed', on ? 'true' : 'false')
         }
       }
       paintZoom()
 
-      let zoomLoading = false
-      const onZoomClick = async (event) => {
+      const onZoomClick = (event) => {
         const button = event.target instanceof Element
           ? event.target.closest('button[data-zoom]')
           : null
@@ -1994,53 +2810,40 @@ window.__ModuleLoader__.load({
         canvasSignature = ''
         anchorSignature = ''
         schedule()
+        // A mode switch retires whatever chain the previous mode started —
+        // 全 -> 近 must not keep pulling history in the background.
+        const active = loader.active()
+        if (active !== null && active.kind === 'zoom') loader.cancel()
+        if (mode !== 'all' && mode !== 'mid') return
         // 全 pulls the whole history in; 中 pulls until twice the initial
-        // extent is on hand — both with the rail loading bar.
-        const needMore = () => olderButton !== null
-          && (mode === 'all'
-            || (mode === 'mid' && scroller.scrollHeight < initialExtent * 2))
-        if ((mode === 'all' || mode === 'mid') && needMore()
-          && !zoomLoading && !autoLoadLatched) {
-          zoomLoading = true
-          root.dataset.loading = '1'
-          loadbar.style.width = '10%'
-          for (let guard = 0; guard < 60 && needMore(); guard += 1) {
-            if (autoLoadLatched) break
-            autoLoadLatched = true
-            const beforeHeight = scroller.scrollHeight
-            const startedAt = Date.now()
-            olderButton.click()
-            await new Promise((resolve) => {
-              const poll = window.setInterval(() => {
-                if (disposed || scroller.scrollHeight !== beforeHeight
-                  || Date.now() - startedAt > 5000) {
-                  window.clearInterval(poll)
-                  resolve()
-                }
-              }, 150)
-            })
-            if (disposed) return
-            if (scroller.scrollHeight > beforeHeight) startMorph(scroller.scrollHeight - beforeHeight)
-            autoLoadLatched = false
-            structureDirty = true
-            rebuild()
-            lastScrollHeight = scroller.scrollHeight
-            structureDirty = false
-            schedule()
-            loadbar.style.width = Math.round(100 * (1 - Math.pow(0.7, guard + 2))) + '%'
-          }
-          loadbar.style.width = '100%'
-          await new Promise((resolve) => window.setTimeout(resolve, 200))
-          root.dataset.loading = '0'
-          zoomLoading = false
-          window.setTimeout(() => {
-            loadbar.style.width = '0%'
-          }, 300)
-        }
+        // extent is on hand — both with the rail loading bar. An auto page
+        // in flight is superseded, never waited out.
+        const goal = initialExtent * 2
+        const need = () => olderButton !== null
+          && (mode === 'all' || scroller.scrollHeight < goal)
+        if (!need()) return
+        const startHeight = scroller.scrollHeight
+        runChain('zoom', need, (pages) => (mode === 'mid'
+          ? 10 + 90 * clamp((scroller.scrollHeight - startHeight) / Math.max(1, goal - startHeight), 0, 1)
+          : 100 * (1 - Math.pow(0.7, pages + 1))))
       }
       zoomer.addEventListener('click', onZoomClick)
 
       const onKeyDown = (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          // Keyboard route into the wall: spotlight the prompt you are at.
+          let userIdx = -1
+          if (activeAnchor >= 0 && anchorEntries[activeAnchor] !== undefined) {
+            userIdx = bands[anchorEntries[activeAnchor].index].userIndex
+          }
+          if (userIdx < 0 && userBandIndex.length > 0) {
+            userIdx = bands[userBandIndex[userBandIndex.length - 1]].userIndex
+          }
+          if (userIdx < 0) return
+          event.preventDefault()
+          openWall(userIdx, true)
+          return
+        }
         releasePin()
         const page = scroller.clientHeight
         const steps = {
@@ -2149,24 +2952,46 @@ window.__ModuleLoader__.load({
       rail.addEventListener('wheel', onWheel, { passive: false })
       rail.addEventListener('dblclick', onDoubleClick)
       rail.addEventListener('keydown', onKeyDown)
-      window.addEventListener('resize', schedule)
+      const onResize = () => {
+        // The wall is fixed and vw-sized: its cards move with the window.
+        if (wallOpen) layoutWall('keep')
+        markLayout()
+      }
+      window.addEventListener('resize', onResize)
+      const onVisibility = () => {
+        if (doc.hidden) return
+        layoutDirty = true
+        markDirty()
+      }
+      doc.addEventListener('visibilitychange', onVisibility)
+      // Session switches arrive from the store, not from a poll.
+      const unsubscribeSessions = subscribeSessions(schedule)
 
       if (pinned) {
         expanded = true
         root.dataset.expanded = '1'
       }
 
-      // Safety net for the states no observer reports: a scrollport swapped in
-      // by a composition change, or a sticky composer that grew under us.
-      const ticker = window.setInterval(schedule, 800)
+      // Safety net for the states no observer reports (a scrollport swapped
+      // in by a composition change, a DPR change): a slow tick, idle while
+      // the page is hidden. Scroll, size, structure and session changes all
+      // have their own signals now.
+      const ticker = window.setInterval(() => {
+        if (doc.hidden) return
+        markLayout()
+      }, 3000)
       schedule()
 
       return () => {
         disposed = true
+        loader.cancel()
+        promptStore.dispose()
+        unsubscribeSessions()
         if (collapseTimer !== 0) window.clearTimeout(collapseTimer)
         if (frame !== 0) window.cancelAnimationFrame(frame)
         window.clearInterval(ticker)
-        window.removeEventListener('resize', schedule)
+        window.removeEventListener('resize', onResize)
+        doc.removeEventListener('visibilitychange', onVisibility)
         rail.removeEventListener('pointerenter', onEnter)
         root.removeEventListener('pointerleave', onLeave)
         root.removeEventListener('pointerenter', cancelCollapse)
@@ -2178,47 +3003,55 @@ window.__ModuleLoader__.load({
         rail.removeEventListener('dblclick', onDoubleClick)
         rail.removeEventListener('keydown', onKeyDown)
         zoomer.removeEventListener('click', onZoomClick)
-          anchorsEl.removeEventListener('click', onAnchorClick)
+        anchorsEl.removeEventListener('click', onAnchorClick)
         anchorsEl.removeEventListener('mouseover', onAnchorOver)
         anchorsEl.removeEventListener('mouseout', onAnchorOut)
         anchorsEl.removeEventListener('wheel', onWheel)
-        // Hand the scrollbar back before letting go of the element.
-        suppressNativeThumb(false)
+        // Hand the scrollbar back — with its original inline values — before
+        // letting go of the element.
+        thumb.release()
         if (scroller !== null) {
           scroller.removeEventListener('scroll', schedule)
           scroller.removeEventListener('wheel', releasePin)
           scroller.removeEventListener('pointerdown', releasePin)
         }
         resizeObserver.disconnect()
+        seatObserver.disconnect()
+        rowObserver.disconnect()
         flowObserver.disconnect()
         themeObserver.disconnect()
         if (wallCloseTimer !== 0) window.clearTimeout(wallCloseTimer)
         wall.removeEventListener('click', onWallClick)
         wall.removeEventListener('mouseover', onWallOver)
+        wall.removeEventListener('focusin', onWallFocus)
         wall.removeEventListener('pointerenter', cancelWallClose)
         wall.removeEventListener('pointerleave', scheduleWallClose)
         wallPagerTop.removeEventListener('click', onPageUp)
         wallPagerBottom.removeEventListener('click', onPageDown)
         doc.removeEventListener('keydown', onWallKey, true)
+        resetWall()
         wall.remove()
         anchorsEl.remove()
         rail.remove()
+        zoomer.remove()
       }
     }
+
+    /** Resolved by apply(); reads the current session id off ctx.sessions. */
+    let getSessionId = () => undefined
+    /** Resolved by apply(); subscribes to the session list store. */
+    let subscribeSessions = () => () => {}
 
     /**
      * The slot entry: a bare element the imperative engine owns.
      * @returns the overlay entry element.
      */
-    /** Resolved by apply(); reads the current session id off ctx.sessions. */
-    let getSessionId = () => undefined
-
     function TraceMinimap() {
       const ref = react.useRef(null)
       react.useEffect(() => {
         const element = ref.current
         if (element === null) return undefined
-        return mountMinimap(element, getSessionId)
+        return mountMinimap(element, getSessionId, subscribeSessions)
       }, [])
       return h('div', { ref, className: 'dsh-strata-root', 'data-plugin': ID, 'data-show': '0' })
     }
@@ -2240,6 +3073,16 @@ window.__ModuleLoader__.load({
           return undefined
         }
       }
+      subscribeSessions = (listener) => {
+        const sessions = ctx.get('sessions')
+        if (sessions === undefined) return () => {}
+        try {
+          const off = sessions.list.subscribe(listener)
+          return typeof off === 'function' ? off : () => {}
+        } catch {
+          return () => {}
+        }
+      }
       ctx.slots.inject('shell.overlay', () => ctx.slots.register({
         name: 'shell.overlay',
         id: 'strata',
@@ -2250,6 +3093,26 @@ window.__ModuleLoader__.load({
     exports.TraceMinimap = TraceMinimap
     exports.apply = apply
     exports.inject = inject
+    /** DOM-free logic, exposed for `node --test`; not a public API. */
+    exports.internals = {
+      CSS,
+      SPECS,
+      clamp,
+      isUserKind,
+      windowFor,
+      canvasSignatureOf,
+      scrubTarget,
+      visibleRange,
+      wheelPixels,
+      createThumbSuppressor,
+      promptOf,
+      createPromptParser,
+      parsePrompts,
+      createPromptStore,
+      createHistoryLoader,
+      LOAD_PAGE_CAP,
+      LOAD_PAGE_TIMEOUT,
+    }
     return module.exports
   },
 })

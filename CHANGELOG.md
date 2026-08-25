@@ -1,5 +1,67 @@
 # Changelog
 
+## 0.9.0 — 2026-08-26
+
+Correctness and performance pass driven by the 2026-08-26 audit
+(`AUDIT_REPORT.md`), plus the first automated tests.
+
+Fixed:
+
+- 近/中: the canvas cache key now includes the zoom mode, the window offset,
+  the scale and the device pixel ratio, and one display mapping is computed
+  per frame and shared by the canvas, the dots, the lens and the hit test —
+  scrolling in a zoomed scale no longer leaves the strata behind the anchors.
+- 近/中: dragging the rail maps against the window frozen at pointerdown, so
+  a pixel of pointer travel is always the same scroll distance; a 3px slop
+  separates a band click from a drag.
+- Clue wall: the full-log cache is validated by the LAST loaded user row's
+  anchor key, not by a count. Loading older history keeps it; a message you
+  send is grafted from the transcript instead of re-downloading the export;
+  anything else refetches. Only `surfaceOp: "append"` user messages count,
+  matching the host's projection.
+- Clue wall: export requests carry a generation and an AbortController; a
+  session switch retires them, and a late response from the previous session
+  can neither overwrite the cache nor render into the open wall.
+- History loading has one owner (`createHistoryLoader`): auto-paging, 中/全
+  and unloaded-card jumps run through it. A page with no progress stops the
+  chain at once, the 60-page cap and a vanished pager are reported (amber
+  bar and ⌃) instead of shown as 100%, a mode switch cancels the old chain,
+  and 全 clicked during an auto page supersedes it instead of doing nothing.
+- Clue wall pagers keep their rows while hidden (visibility, not display),
+  so the card area measured before packing is the area the cards get.
+- The native scrollbar's thumb variables are restored to their previous
+  inline values and priorities, per element, not merely removed.
+- Rail wheel honours `deltaMode` (line and page deltas scale by the
+  scroller's line height / viewport).
+- Keyboard and AT: cards are `role=button`, focusable, Enter/Space jump;
+  Enter on the rail opens the wall on the prompt you are at and focuses its
+  card; Esc returns focus to the rail; zoom buttons carry labels and
+  `aria-pressed`.
+
+Performance:
+
+- Streaming output no longer re-measures the transcript: rows are watched by
+  a ResizeObserver whose border-box sizes update ONE band and shift the rest
+  arithmetically; the MutationObserver drops `characterData` and only treats
+  rows appearing/leaving/failing as structural.
+- Canvas repaints and hit tests visit only the bands inside the display
+  window (binary search on the sorted bands); anchor sync starts from the
+  window too.
+- The clue wall is virtualised: only the visible window plus a small buffer
+  exists as DOM, heights are cached per column width and measured in
+  batches, and connector paths persist across frames with card rects re-read
+  only while a layout settles.
+- The export is parsed as a stream of lines while it inflates; failed
+  exports back off (2s doubling to 30s) instead of retrying on every hover.
+- The idle safety-net tick runs every 3s (idle while the tab is hidden)
+  instead of 800ms; session switches come from the session store, composer
+  growth from its own ResizeObserver.
+
+Tests: `npm test` runs `node --test` over the DOM-free internals (window
+mapping, cache key, scrub mapping, visible range, wheel units, thumb
+restore, prompt parsing, prompt store, history loader). `test/replay/`
+holds the headless-Chrome replay used against a live `dsh web`.
+
 ## 0.8.2 — 2026-08-19
 
 - 中 responds from a fresh session. Its extent was derived from the loaded

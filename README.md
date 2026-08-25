@@ -152,6 +152,18 @@ disables the transitions.
 - The rail occupies a ~14px strip of the transcript's right padding, so clicks in that
   strip go to the map.
 
+## Development
+
+```sh
+npm test                      # node --test over the DOM-free internals
+node test/replay/replay.mjs   # headless-Chrome replay against a live `dsh web` (see the file header)
+```
+
+The geometry, caches and the history-load state machine are exported as
+`internals` from `client.js` and tested without a browser; the replay drives
+a real session through Chrome's DevTools protocol (scroll consistency, drag,
+wall paging, load chains, session switch).
+
 ## License
 
 MIT

@@ -1,6 +1,6 @@
 {
   "name": "dsh-strata",
-  "version": "0.8.2",
+  "version": "0.9.0",
   "description": "Session strata for the DeepSeek Harness Web GUI: the transcript's scrollbar becomes a to-scale, colour-coded map of the whole run — user messages emphasised, clickable anchors, auto-loading history, and a hover deck of every prompt in the session.",
   "keywords": [
     "dsh",
@@ -18,6 +18,9 @@
     ".": "./index.js",
     "./client": "./client.js",
     "./package.json": "./package.json"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.js"
   },
   "files": [
     "index.js",
