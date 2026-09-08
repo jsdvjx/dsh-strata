@@ -4,7 +4,7 @@ import { internals, id } from './load.js'
 
 const {
   windowFor, canvasSignatureOf, scrubTarget, visibleRange, wheelPixels,
-  createThumbSuppressor, promptOf, parsePrompts, createPromptParser,
+  createThumbSuppressor, createTurnRailSuppressor, promptOf, parsePrompts, createPromptParser,
   createPromptStore, createHistoryLoader, LOAD_PAGE_CAP, CSS,
 } = internals
 
@@ -119,6 +119,87 @@ test('thumb suppressor restores the old element when the scroller is swapped', (
   thumb.hold(b) // idempotent
   thumb.release()
   assert.deepEqual(b.style.dump(), {})
+})
+
+// ── the host's own turn rail: hidden only while the map is up ─────────────
+/**
+ * A document just deep enough for the suppressor: one plugin stylesheet whose
+ * rules answer `getPropertyValue`, plus a head that collects appended tags.
+ */
+function fakeDoc(sheets) {
+  const head = []
+  return {
+    head: { appendChild: (el) => { el.isConnected = true; head.push(el) } },
+    querySelectorAll: (selector) => (selector.includes('TurnNavigator') ? sheets : []),
+    createElement: () => {
+      const el = {
+        dataset: {}, textContent: '', isConnected: false,
+        remove: () => {
+          el.isConnected = false
+          head.splice(head.indexOf(el), 1)
+        },
+      }
+      return el
+    },
+    dump: () => head.map((el) => el.textContent),
+  }
+}
+const fakeSheet = (rules) => ({ sheet: { cssRules: rules } })
+const fakeRule = (selectorText, props) => ({
+  selectorText,
+  style: { getPropertyValue: (n) => props[n] ?? '' },
+})
+test('turn rail suppressor keys on the rail band property, not the hashed class', () => {
+  const sheets = [fakeSheet([
+    { selectorText: undefined, style: undefined }, // @container / @keyframes
+    fakeRule('.Xy7_slot', { position: 'sticky' }),
+    fakeRule('.Xy7_frame', { '--turn-rail-band': 'calc(100dvh - 152px)' }),
+  ])]
+  const doc = fakeDoc(sheets)
+  const rail = createTurnRailSuppressor(doc, () => 0)
+  rail.hold()
+  assert.equal(rail.selector(), '.Xy7_frame')
+  assert.deepEqual(doc.dump(), ['.Xy7_frame{display:none!important}'])
+  rail.hold() // idempotent while the tag is still in the document
+  assert.equal(doc.dump().length, 1)
+})
+
+test('turn rail suppressor hands the rail back on release and stays quiet without one', () => {
+  const doc = fakeDoc([fakeSheet([fakeRule('.Zz_frame', { '--turn-rail-band': '1px' })])])
+  const rail = createTurnRailSuppressor(doc, () => 0)
+  rail.hold()
+  const tag = doc.dump().length
+  rail.release()
+  assert.equal(tag, 1)
+  assert.equal(doc.dump().length, 0)
+  rail.release() // idempotent
+
+  // A DSH with no turn rail: nothing to resolve, so nothing is written.
+  const bare = fakeDoc([])
+  const none = createTurnRailSuppressor(bare, () => 0)
+  none.hold()
+  assert.equal(none.selector(), '')
+  assert.deepEqual(bare.dump(), [])
+})
+
+test('turn rail suppressor throttles the CSSOM walk until the stylesheet lands', () => {
+  let walks = 0
+  const late = []
+  const doc = fakeDoc(late)
+  doc.querySelectorAll = (selector) => {
+    if (!selector.includes('TurnNavigator')) return []
+    walks += 1
+    return late
+  }
+  let now = 0
+  const rail = createTurnRailSuppressor(doc, () => now)
+  for (let i = 0; i < 60; i += 1) { rail.hold(); now += 16 } // ~1s of frames
+  assert.equal(walks, 1)
+  now += 2000
+  late.push(fakeSheet([fakeRule('.Late_frame', { '--turn-rail-band': '1px' })]))
+  rail.hold()
+  assert.equal(walks, 2)
+  assert.equal(rail.selector(), '.Late_frame')
 })
 
 // ── prompts: append-origin user messages only, streamed ───────────────────

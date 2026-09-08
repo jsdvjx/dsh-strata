@@ -48,6 +48,26 @@ gutter stays reserved either way. It is a takeover, not a theft: the moment the 
 down (Trajectory tab, no session, a transcript that does not scroll) the native scrollbar
 comes straight back, and uninstalling restores it permanently.
 
+## …and the turn rail beside it
+
+DSH 0.1.2-rc.1 grew a navigator of its own: a fixed-pitch rail of turn marks
+down the right edge of the transcript — the same strip this map lives in, so
+the two land on top of each other and the host's rail covers the anchor dots.
+The map treats it exactly like the scrollbar: while the map is up the host
+rail is hidden, and the moment the map stands down (Trajectory, no session, a
+transcript that does not scroll) it is handed straight back. Nothing reflows
+either way — that rail is absolutely positioned inside a zero-height sticky
+slot, so hiding it costs no layout.
+
+Want both? Keep the host's rail with
+
+```js
+localStorage['dsh-strata.native-turn-rail'] = 'keep'
+```
+
+and reload. On DSH releases without that rail (0.1.1-rc.2 and earlier) there
+is nothing to hide and nothing changes.
+
 ## Anchors
 
 Beside the rail is a column of clickable anchor dots — **blue for every message you sent,
@@ -151,6 +171,9 @@ disables the transitions.
   anchors; the map stands down there rather than guessing.
 - The rail occupies a ~14px strip of the transcript's right padding, so clicks in that
   strip go to the map.
+- Hiding the host's turn rail is keyed on the stylesheet that rail ships
+  (the rule declaring `--turn-rail-band`). A DSH that stops shipping it under
+  that name gets its rail back, not a broken map.
 
 ## Development
 

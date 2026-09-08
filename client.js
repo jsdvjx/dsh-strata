@@ -41,6 +41,17 @@ window.__ModuleLoader__.load({
     // `transparent` on a scrolling element draws no thumb on either engine
     // path while the gutter stays reserved (ui-sidebar uses the same seam).
     const THUMB_VARS = ['--dsh-scrollbar-thumb', '--dsh-scrollbar-thumb-hover']
+    // DSH 0.1.2-rc.1 parks a second navigator — a fixed-pitch rail of turn
+    // marks — down the same right edge this map owns. Its class names are
+    // build-hashed, so the seam is the stylesheet the component ships: the one
+    // rule declaring `--turn-rail-band` IS that rail's frame, whatever hash the
+    // build resolved to.
+    const TURN_RAIL_CSS = 'style[data-plugin-css$="/TurnNavigator.module.css"]'
+    const TURN_RAIL_VAR = '--turn-rail-band'
+    // Retry cadence while that stylesheet has not landed yet: the map asks once
+    // a frame and must not pay a CSSOM walk for every one of them.
+    const TURN_RAIL_PROBE_MS = 2000
+    const NATIVE_RAIL_KEY = 'dsh-strata.native-turn-rail'
     // Kinds that earn a clickable anchor dot beside the rail.
     const ANCHOR_TONES = {
       'user': 'user',
@@ -708,6 +719,71 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Hide (and hand back) the host's own turn-navigation rail.
+     *
+     * DSH 0.1.2-rc.1 added a fixed-pitch rail of turn marks down the right
+     * edge of the transcript — the strip this map already took over, so the
+     * two land on top of each other and the host's sits over the anchor dots
+     * and the clue wall. It is the scrollbar argument again: one navigator per
+     * gutter, and the map only claims it while the map itself is up.
+     *
+     * The suppression is a stylesheet rather than an inline style, because the
+     * rail is a React node that remounts — a hashed class survives that, a
+     * written-on element does not. The selector is read out of the component's
+     * OWN stylesheet by the custom property it declares, so a rebuild that
+     * reshuffles the hash still resolves, and a DSH without the rail resolves
+     * to nothing and is left alone.
+     * @param doc - the document owning the overlay.
+     * @param now - clock, for the probe throttle.
+     * @returns `{ hold(), release(), selector() }`.
+     */
+    function createTurnRailSuppressor(doc, now) {
+      let selector = ''
+      let probedAt = -Infinity
+      let tag = null
+      const resolve = () => {
+        if (selector !== '') return selector
+        const at = now()
+        if (at - probedAt < TURN_RAIL_PROBE_MS) return ''
+        probedAt = at
+        for (const el of doc.querySelectorAll(TURN_RAIL_CSS)) {
+          let rules = []
+          try {
+            rules = el.sheet === null ? [] : el.sheet.cssRules
+          } catch {
+            continue // A sheet the document will not let us read is not ours.
+          }
+          for (const rule of rules) {
+            // Grouping rules (@container, @keyframes) carry no `style`; only
+            // the frame's own rule declares the rail band.
+            if (rule.style === undefined || rule.style.getPropertyValue(TURN_RAIL_VAR) === '') continue
+            selector = rule.selectorText
+            return selector
+          }
+        }
+        return ''
+      }
+      const release = () => {
+        if (tag === null) return
+        tag.remove()
+        tag = null
+      }
+      const hold = () => {
+        if (tag !== null) {
+          if (tag.isConnected) return
+          tag = null
+        }
+        const sel = resolve()
+        if (sel === '') return
+        tag = doc.createElement('style')
+        tag.dataset.dshStrata = 'turn-rail'
+        tag.textContent = sel + '{display:none!important}'
+        doc.head.appendChild(tag)
+      }
+      return { hold, release, selector: () => selector }
+    }
+
+    /**
      * A user prompt out of one session event, or null. Mirrors the host's
      * chat projection: only APPEND-origin `user/message` events with a
      * human source are rows; replacement events (compaction checkpoints)
@@ -1088,6 +1164,14 @@ window.__ModuleLoader__.load({
 
       const g = canvas.getContext('2d')
       const thumb = createThumbSuppressor(THUMB_VARS)
+      const turnRail = createTurnRailSuppressor(doc, () => Date.now())
+      // Escape hatch for anyone who wants both navigators up at once.
+      let keepNativeTurnRail = false
+      try {
+        keepNativeTurnRail = window.localStorage.getItem(NATIVE_RAIL_KEY) === 'keep'
+      } catch {
+        // Storage refusal only costs the opt-out.
+      }
 
       let scroller = null
       let bands = []
@@ -1286,6 +1370,23 @@ window.__ModuleLoader__.load({
         if (scroller === null) return
         if (on) thumb.hold(scroller)
         else thumb.release()
+      }
+
+      /**
+       * Take over (or hand back) the host's own turn-navigation rail.
+       *
+       * Same contract as the scrollbar above: the rail is hidden only while
+       * the map is actually up, so a view the map stands down on (Trajectory,
+       * a transcript that does not scroll, no session) keeps the navigator DSH
+       * shipped, and uninstalling leaves it untouched. Owners who want both at
+       * once keep the host rail with
+       * `localStorage['dsh-strata.native-turn-rail'] = 'keep'`.
+       * @param on - whether the native turn rail should be suppressed.
+       */
+      function suppressNativeTurnRail(on) {
+        if (keepNativeTurnRail) return
+        if (on) turnRail.hold()
+        else turnRail.release()
       }
 
       /**
@@ -1749,6 +1850,7 @@ window.__ModuleLoader__.load({
       function setVisible(next) {
         root.dataset.show = next ? '1' : '0'
         suppressNativeThumb(next)
+        suppressNativeTurnRail(next)
         if (!next) closeWall()
       }
 
@@ -3007,9 +3109,10 @@ window.__ModuleLoader__.load({
         anchorsEl.removeEventListener('mouseover', onAnchorOver)
         anchorsEl.removeEventListener('mouseout', onAnchorOut)
         anchorsEl.removeEventListener('wheel', onWheel)
-        // Hand the scrollbar back — with its original inline values — before
-        // letting go of the element.
+        // Hand back what the map took over — the scrollbar with its original
+        // inline values, the host's turn rail — before letting go.
         thumb.release()
+        turnRail.release()
         if (scroller !== null) {
           scroller.removeEventListener('scroll', schedule)
           scroller.removeEventListener('wheel', releasePin)
@@ -3105,6 +3208,7 @@ window.__ModuleLoader__.load({
       visibleRange,
       wheelPixels,
       createThumbSuppressor,
+      createTurnRailSuppressor,
       promptOf,
       createPromptParser,
       parsePrompts,

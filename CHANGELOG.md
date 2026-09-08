@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.10.0 — 2026-09-08
+
+Added:
+
+- **The host's own turn rail steps aside for the map.** DSH 0.1.2-rc.1 ships a
+  fixed-pitch turn navigator down the right edge of the transcript — the strip
+  this map already took over, so the two overlapped and the host's rail covered
+  the anchor dots (its frame spans the dot column exactly). It is now suppressed
+  for exactly as long as the map is up, on the same contract the scrollbar
+  takeover keeps: stand down (Trajectory, no session, a transcript that does not
+  scroll) and it is handed straight back; uninstall and it never moved.
+  Suppression is a stylesheet rule, not a written-on element, so it survives the
+  rail's React remounts, and the selector is read from the component's own
+  stylesheet by the `--turn-rail-band` property it declares — a rebuild that
+  reshuffles the CSS-module hash still resolves.
+  Set `localStorage['dsh-strata.native-turn-rail'] = 'keep'` to keep both.
+  (reported in [#2](https://github.com/jsdvjx/dsh-strata/issues/2))
+
+Compatibility:
+
+- Verified against DSH 0.1.2-rc.1, where chat rendering moved to
+  `@deepseek-ai/dsh-client-ui-chat`: the anchors the map reads
+  (`data-conversation-scroll`, `data-chat-anchor-key`, `data-chat-flow-kind`,
+  `data-composer-seat`) all still publish, and the map, the dots, the clue wall
+  and the load chain behave as they do on 0.1.1-rc.2.
+- DSH releases without that rail (0.1.1-rc.2 and earlier) resolve nothing and
+  are untouched; the probe is throttled so looking for a rail that is not there
+  costs one CSSOM walk every 2s, not one per frame.
+
 ## 0.9.0 — 2026-08-26
 
 Correctness and performance pass driven by the 2026-08-26 audit
