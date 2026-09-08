@@ -21,7 +21,7 @@ is the shape of the run at a glance: where you spoke, how much work each prompt 
 where it went wrong.
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jsdvjx/dsh-strata/main/docs/demo.gif" alt="Live demo: hovering expands the rail with a preview card, clicking a band or an anchor dot jumps, dragging the lens scrubs the whole session" width="840">
+  <img src="https://raw.githubusercontent.com/jsdvjx/dsh-strata/main/docs/demo.gif" alt="Live demo: hovering expands the rail and lights the band under the cursor, clicking a band or an anchor dot jumps, dragging the lens scrubs the whole session" width="840">
 </p>
 
 ## What the map shows
@@ -110,8 +110,9 @@ history shifts the window, never the scale.
 ## Use
 
 - **Click an anchor dot** to jump to that message or failure.
-- **Hover** the rail — it widens and shows a preview card for the row under the cursor
-  (kind, `n/total` for your own messages, and the row's text).
+- **Hover** the rail — it widens, the band under the cursor lights up, and on one of
+  your own messages the clue wall opens (an anchor dot's tooltip carries the kind and
+  `n/total`).
 - **Click** a band to scroll it into reading position; the row flashes when it lands.
 - **Click empty track or drag** to scrub proportionally, like a scrollbar.
 - **Wheel** over the rail or the dots to scroll the transcript.
@@ -147,18 +148,22 @@ dsh plugin --profile web remove dsh-strata
 
 Pure browser half; the Node half is empty and no session data crosses the wire for it.
 Geometry and semantics both come from anchors the conversation view already publishes —
-`[data-conversation-scroll]` for the scrollport, `[data-chat-anchor-key]` per flow row,
-`data-chat-flow-kind` for that row's registered Chat Node kind, `data-state="error"` for a
-failed tool or command, `[data-composer-seat]` to stay clear of the sticky composer. It
+`[data-conversation-scroll]` for the scrollport, `[data-chat-anchor-key]` per flow row
+(the *outermost* one: a tool renderer nests a `call:<id>` anchor of its own inside the
+row, and that belongs to the row rather than being a row), `data-chat-flow-kind` for
+that row's registered Chat Node kind, `data-state="error"` for a failed tool or command,
+`hidden` on a row for the turn folding DSH 0.1.2 does in Compact mode,
+`[data-composer-seat]` to stay clear of the sticky composer. It
 contributes one entry to the frame-wide `shell.overlay` list slot, so it adds a surface
 instead of replacing one, and uninstalling leaves the native UI untouched. The scrollbar
 takeover uses the theme's documented seam — rebinding `--dsh-scrollbar-thumb` to
 `transparent` on the scrollport, the same mechanism ui-sidebar uses — so both the WebKit
 and Firefox rendering paths are covered and no stylesheet is overridden.
 
-Rendering is a canvas repainted on a rAF, re-measuring rows only when the transcript
-mutates or its scroll height changes — a plain scroll moves the lens and nothing else, so a
-streaming turn does not drag layout through the map. Colors are read from the theme's own
+Rendering is a canvas repainted on a rAF, re-measuring rows only when the transcript's
+structure changes — a streaming reply grows one band through its own ResizeObserver
+report, a plain scroll moves the lens and nothing else, and the strata are cached as a
+base layer so a hover repaints one band, not the session. Colors are read from the theme's own
 `--dsw-alias-*` tokens, so light and dark both come out right, and `prefers-reduced-motion`
 disables the transitions.
 
@@ -185,7 +190,11 @@ node test/replay/replay.mjs   # headless-Chrome replay against a live `dsh web` 
 The geometry, caches and the history-load state machine are exported as
 `internals` from `client.js` and tested without a browser; the replay drives
 a real session through Chrome's DevTools protocol (scroll consistency, drag,
-wall paging, load chains, session switch).
+wall paging, load chains, session switch). The mounted map exposes a read-only
+seam for it on its root element (`root.__dshStrata`: the measured bands, the
+observation set, hot-path tallies) — a test hook, not an API. Keep the DSH
+tab in the foreground while replaying: a background tab gets no animation
+frames, and the map legitimately reads as stood down.
 
 ## License
 

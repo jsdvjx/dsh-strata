@@ -90,14 +90,19 @@ if (s.unloadedOn > 0) {
     await evaluate(`document.querySelectorAll('.dsh-strata-wallpager')[0].click()`)
     await sleep(300)
   }
-  const first = await evaluate(`document.querySelector('.dsh-strata-wallcard[data-on="1"]')?.dataset.wallIndex`)
+  // Cards are created on demand, so DOM order is not index order: the
+  // window's first card is the SMALLEST index among the cards that are on.
+  const first = await evaluate(`String(Math.min(...Array.from(document.querySelectorAll('.dsh-strata-wallcard[data-on="1"]')).map(c => Number(c.dataset.wallIndex))))`)
   const cards = await state()
   log('top of wall:', JSON.stringify({ first, cards: cards.cards, cardsOn: cards.cardsOn, pagers: cards.pagers }))
   check('paged to the top of the wall with bounded DOM', first === '0' && cards.cards <= cards.cardsOn + 14)
   const r2 = await jumpChain(`.dsh-strata-wallcard[data-wall-index="0"]`, 300000)
   log('jump #1:', JSON.stringify({ sawLoading: r2.sawLoading, endState: r2.endState, secs: r2.seconds, rows: r2.before.rows + ' -> ' + r2.after.rows, older: r2.after.older, olderBtn: r2.after.olderBtn, scroll: Math.round(r2.after.scrollTop), wall: r2.after.wallShow, loading: r2.after.loading }))
   const honest = (r2.endState === '' && r2.after.older === '0') || r2.endState === 'incomplete'
-  check('jump to #1 ends honestly (done+exhausted or incomplete)', r2.sawLoading && r2.after.loading === '0' && honest)
+  // A short session may already be fully on hand after the first chain; then
+  // there is nothing to load and the jump is a plain one.
+  const loadedOrNothingLeft = r2.sawLoading || r2.before.older === '0'
+  check('jump to #1 ends honestly (done+exhausted or incomplete)', loadedOrNothingLeft && r2.after.loading === '0' && honest)
   if (r2.endState === '') check('#1 landed at the top of the transcript', r2.after.scrollTop < 200, 'scrollTop=' + Math.round(r2.after.scrollTop))
   opened = await openWall()
   await sleep(2500)

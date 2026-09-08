@@ -1,5 +1,76 @@
 # Changelog
 
+## 0.11.0 — 2026-09-08
+
+Correctness and performance pass over the whole map, measured on a live
+1,879-row session (0.1.1-rc.2) and a live 0.1.2-rc.1 with turn folding on.
+
+Fixed:
+
+- **Every tool call was painted twice.** The tool renderer nests an anchor of
+  its own (`call:<id>`) inside the flow row, and the map took both for rows —
+  a phantom `unknown` band over every tool tick, and a duplicate error dot on
+  every failed one (633 of 1,877 bands on the long session were phantoms).
+  Only the outermost anchored element is a row now; a nested anchor and any
+  error mark inside it belong to that row.
+- **Turn folding (DSH 0.1.2, Compact mode).** A folded turn hides its rows in
+  place (`hidden`, no mutation the map watched), so a collapse left the folded
+  rows as zero-height bands still painted at their floor height, with their
+  error dots, until something else forced a measure. A row hiding or showing
+  itself is structure now, hidden rows stay under size observation so a turn
+  opening reports itself, and a band that collapses to nothing triggers the
+  measure instead of a phantom.
+- **A page that folds the transcript no longer reads as a stall.** The load
+  chain measured progress by scroll height; the page that completes the
+  history switches folding on and the transcript ends up SHORTER, so an
+  unloaded-card jump was reported amber "incomplete" and never landed.
+  Progress is the topmost row's identity now — new exactly when a page
+  prepended, whatever it did to the height.
+- **The host's turn rail is not the pager.** With everything loaded, the
+  positional fallback for the "load older" control picked the first button
+  above the first row — on 0.1.2 that is a mark of the native turn navigator
+  (a `<nav>` in a sticky slot at the top): the ⌃ stayed on and an auto-page
+  near the top would have clicked a turn mark. Navigation chrome is excluded,
+  and position alone is trusted only when it is unambiguous.
+- **近/中 painted sixty frames a second, idle, after any history load.** The
+  rescale morph a landed page starts is only displayed in 全, and the zoomed
+  early return sat before its expiry — so it stayed armed and kept the frame
+  loop scheduling itself until the next 全. It expires on the clock in every
+  mode now (1 paint per 3s idle, as designed).
+- **A chain that ends at once no longer leaves a phantom "active" record**
+  (goal already met, or pager already gone before the first click): it
+  blocked auto-paging and turned every later growth into a rescale morph.
+- A zoom chain whose scrollport went away mid-flight could throw out of its
+  goal and leave the rail pulsing "loading" forever; it ends amber instead,
+  and losing the scrollport cancels the chain and forgets the pager.
+- A retired export request now cancels its inflate reader instead of
+  finishing the whole log for nobody.
+- Attribute churn outside any row (disclosure state on the pager, the turn
+  controls) no longer forces a full measure; a row re-kinding itself does.
+- A stood-down map leaves the accessibility tree (no tab stop on an invisible
+  scrollbar, no dots from the previous session read out).
+- README: the rail preview card removed in 0.7.3 was still documented.
+
+Performance:
+
+- **Streaming while scrolling no longer measures the whole transcript per
+  growth.** The row observer runs after layout, so a frame scheduled by a
+  scroll or a store emit saw a row's growth one step before its observer did
+  and fell back to a full measure — 27 of 27 growth bursts on the long
+  session. The map now gives the observer that frame first (0 of 27).
+- **Hover repaints one band, not the session.** The strata are cached as an
+  offscreen base layer and composited; the hovered band is painted over it.
+- The 3s safety tick no longer repaints the canvas: the rail box and DPR are
+  in the bitmap key already (was a full repaint of every band every 3s).
+- One error scan per measure instead of a subtree query per row; the pager
+  search stops at the first row; a canvas is resized only when its size
+  changed; dots, lens, shades and wall strings skip identical writes.
+
+Development: the mounted map exposes a read-only seam (`root.__dshStrata`)
+for the headless replay; the replay's top-of-wall assertion reads the
+smallest on-screen index (cards are created on demand, so DOM order is not
+index order) and accepts a session that is already fully loaded.
+
 ## 0.10.0 — 2026-09-08
 
 Added:

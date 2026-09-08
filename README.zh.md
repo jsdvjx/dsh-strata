@@ -15,7 +15,7 @@
 一眼就能看出这次跑动的形状：你在哪儿说了话、每一轮花了多少工作量、哪里出了问题。
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/jsdvjx/dsh-strata/main/docs/demo.gif" alt="实录演示：悬停展开轨道并弹出预览卡，点击色块或锚点跳转，拖动视口框刮擦整段会话" width="840">
+  <img src="https://raw.githubusercontent.com/jsdvjx/dsh-strata/main/docs/demo.gif" alt="实录演示：悬停展开轨道并点亮所指色块，点击色块或锚点跳转，拖动视口框刮擦整段会话" width="840">
 </p>
 
 ## 图上画了什么
@@ -85,7 +85,7 @@ localStorage['dsh-strata.native-turn-rail'] = 'keep'
 ## 用法
 
 - **点锚点圆点**：跳到那条消息或那次失败。
-- **悬停**轨道：轨道变宽，并弹出光标所指那一行的预览卡（类型、你的消息的 `第 n/总数`、行内文本）。
+- **悬停**轨道：轨道变宽，光标所指的色块亮起；指到你自己的消息时线索墙打开（锚点圆点的提示里有类型和 `第 n/总数`）。
 - **点击**色块：滚动到该行并停在阅读位置，落点会闪一下。
 - **点空白处或拖动**：像滚动条一样按比例滑动。
 - **滚轮**：在轨道或锚点上滚动即滚动对话。
@@ -118,15 +118,16 @@ dsh plugin --profile web remove dsh-strata
 ## 实现
 
 纯浏览器半边，Node 半边是空的，不为它走任何会话数据通道。几何和语义都来自对话视图本就公开的锚点 ——
-`[data-conversation-scroll]`（滚动容器）、`[data-chat-anchor-key]`（每个流式行）、
+`[data-conversation-scroll]`（滚动容器）、`[data-chat-anchor-key]`（每个流式行 —— 取**最外层**那个：
+工具渲染器会在行内再嵌一个自己的 `call:<id>` 锚点，那是这一行的一部分，不是另一行）、
 `data-chat-flow-kind`（该行注册的 Chat Node 类型）、`data-state="error"`（失败的工具/命令行）、
-`[data-composer-seat]`（避开吸底输入框）。它只往全局 `shell.overlay` 列表插槽里加一个条目，
+行上的 `hidden`（DSH 0.1.2 精简模式下折叠的轮次过程）、`[data-composer-seat]`（避开吸底输入框）。它只往全局 `shell.overlay` 列表插槽里加一个条目，
 是**加**一个面而不是替换任何面，卸载后原生 UI 分毫不动。滚动条接管走主题自己写明的口子 ——
 在滚动容器上把 `--dsh-scrollbar-thumb` 重绑为 `transparent`（ui-sidebar 用的就是这个机制），
 WebKit 与 Firefox 两条渲染路径都覆盖，不覆写任何样式表。
 
-渲染走 canvas + rAF：只有对话发生变更或滚动高度变化时才重新量行，纯滚动只移动视口方框 ——
-所以流式输出期间不会被地图拖着反复排版。颜色全部读主题自己的 `--dsw-alias-*` token，明暗主题都对；
+渲染走 canvas + rAF：只有对话结构变化时才重新量行 —— 流式回复长高由该行自己的 ResizeObserver
+报上来只改一个色块，纯滚动只移动视口方框，地层本身缓存成一层底图，悬停只重画一个色块而不是整段会话。颜色全部读主题自己的 `--dsw-alias-*` token，明暗主题都对；
 `prefers-reduced-motion` 下关闭过渡动画。
 
 ## 边界
@@ -141,12 +142,14 @@ WebKit 与 Firefox 两条渲染路径都覆盖，不覆写任何样式表。
 ## 开发
 
 ```sh
-npm test                      # node --test 跑与 DOM 无关的内部逻辑
-node test/replay/replay.mjs   # 对着本机运行中的 `dsh web` 做无头 Chrome 回放（见文件头注释）
+npm test                      # node --test 跑无 DOM 的内部逻辑
+node test/replay/replay.mjs   # 无头 Chrome 对着一个活的 `dsh web` 回放（见文件头）
 ```
 
-几何映射、缓存和历史加载状态机从 `client.js` 以 `internals` 导出、不依赖浏览器即可测；
-回放脚本通过 Chrome DevTools 协议驱动真实会话（滚动一致性、拖动、线索墙分页、加载链、会话切换）。
+几何、缓存和历史加载状态机以 `internals` 从 `client.js` 导出，不用浏览器就能测；回放脚本通过
+Chrome DevTools 协议驱动一个真实会话（滚动一致性、拖动、线索墙分页、加载链、会话切换）。挂载后的
+地图在根元素上留了一个只读缝 `root.__dshStrata`（量出来的色块、观察集合、热路径计数）给回放用 ——
+是测试钩子，不是 API。回放时让 DSH 页签保持前台：后台页签拿不到动画帧，地图会如实地显示为已隐身。
 
 ## 许可
 

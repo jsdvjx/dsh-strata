@@ -379,24 +379,30 @@ test('store: failures back off instead of refetching on every hover', async () =
 })
 
 // ── P2-1: history loader ──────────────────────────────────────────────────
-function fakeHost({ pages = Infinity, grow = 500, latency = 1, stallAfter = Infinity } = {}) {
+function fakeHost({ pages = Infinity, grow = 500, latency = 1, stallAfter = Infinity, fold = false } = {}) {
   let height = 1000
   let clock = 0
   let remaining = pages
   let queued = 0
   let clicks = 0
+  let landed = 0
   const button = { click() { clicks += 1; if (remaining > 0 && clicks <= stallAfter) queued = latency } }
   const deps = {
     button: () => (remaining > 0 ? button : null),
     height: () => height,
+    // The topmost row's key: new on every landed page.
+    mark: () => 'row-' + landed,
     now: () => clock,
     wait: async (ms) => {
       clock += ms
       if (queued > 0) {
         queued -= 1
         if (queued === 0) {
-          height += grow
+          // A host that folds finished turns once the history is complete
+          // ends up SHORTER after the last page than before it.
+          height += fold && remaining === 1 ? -grow * 3 : grow
           remaining -= 1
+          landed += 1
         }
       }
     },
@@ -415,6 +421,14 @@ test('loader: reaches the goal and reports done', async () => {
   assert.deepEqual(result, { status: 'done', pages: 3 })
   assert.deepEqual(progress, [1, 2, 3])
   assert.equal(loader.active(), null)
+})
+
+test('loader: a page that FOLDS the transcript shorter still counts as progress', async () => {
+  const host = fakeHost({ pages: 2, fold: true })
+  const loader = createHistoryLoader(host)
+  const result = await loader.run('jump', () => host.pagesLanded() < 2)
+  assert.deepEqual(result, { status: 'done', pages: 2 })
+  assert.ok(host.height() < 1000, 'the host really did shrink: ' + host.height())
 })
 
 test('loader: a page with no progress stops the chain at once', async () => {
@@ -439,6 +453,19 @@ test('loader: running out of pager before the goal is exhausted', async () => {
   const loader = createHistoryLoader(host)
   const result = await loader.run('jump', () => true)
   assert.deepEqual(result, { status: 'exhausted', pages: 2 })
+})
+
+test('loader: a chain that finishes at once leaves no phantom active record', async () => {
+  // Goal already met: the body returns before the first await.
+  const met = createHistoryLoader({ button: () => ({ click() {} }), height: () => 100, now: () => 0, wait: async () => {}, onPage: () => {} })
+  const done = await met.run('jump', () => false)
+  assert.equal(done.status, 'done')
+  assert.equal(met.active(), null)
+  // Pager already gone: same synchronous exit, same expectation.
+  const gone = createHistoryLoader({ button: () => null, height: () => 100, now: () => 0, wait: async () => {}, onPage: () => {} })
+  const out = await gone.run('zoom', () => true)
+  assert.equal(out.status, 'exhausted')
+  assert.equal(gone.active(), null)
 })
 
 test('loader: cancel (mode/session switch) ends the chain and frees the owner', async () => {

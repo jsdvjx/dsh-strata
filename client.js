@@ -1010,7 +1010,11 @@ window.__ModuleLoader__.load({
      * a zoom that needs more session on hand and a wall jump above the
      * loaded window all run through here, so there is one task at a time,
      * one cancel, and a status that says whether the goal was reached.
-     * @param deps - `{ button(), height(), now(), wait(ms), onPage(grown) }`.
+     * Progress is read from `deps.mark()` — the topmost row's identity, not
+     * the scroll height: a page that completes the history can make the
+     * host FOLD finished turns, and the transcript ends up shorter than
+     * before the page landed. Height would call that a stall.
+     * @param deps - `{ button(), mark(), now(), wait(ms), onPage() }`.
      * @returns `{ run(kind, need, onProgress), cancel(), active() }`.
      */
     function createHistoryLoader(deps) {
@@ -1033,31 +1037,36 @@ window.__ModuleLoader__.load({
           if (active !== null && active.gen === mine) active = null
           return { status, pages }
         }
+        // Registered BEFORE the body runs: a chain whose goal is already met,
+        // or whose pager is already gone, finishes synchronously — a record
+        // written after that would outlive it as a phantom "active" chain
+        // that blocks auto-paging and morphs every growth into a rescale.
+        const record = { kind, gen: mine, task: null }
+        active = record
         const task = (async () => {
           while (need()) {
             if (pages >= LOAD_PAGE_CAP) return finish('capped')
             const el = deps.button()
             if (el === null || el === undefined) return finish('exhausted')
-            const before = deps.height()
+            const before = deps.mark()
             const started = deps.now()
             el.click()
-            while (deps.height() === before && deps.now() - started < LOAD_PAGE_TIMEOUT) {
+            while (deps.mark() === before && deps.now() - started < LOAD_PAGE_TIMEOUT) {
               await deps.wait(150)
               if (mine !== gen) return finish('cancelled')
             }
             if (mine !== gen) return finish('cancelled')
-            const grown = deps.height() - before
             // No progress on a page is a terminal fault, not a reason to
             // click sixty more times.
-            if (grown <= 0) return finish('stalled')
+            if (deps.mark() === before) return finish('stalled')
             pages += 1
-            deps.onPage(grown)
+            deps.onPage()
             if (onProgress !== undefined) onProgress(pages)
             if (mine !== gen) return finish('cancelled')
           }
           return finish('done')
         })()
-        active = { kind, gen: mine, task }
+        record.task = task
         return task
       }
       const cancel = () => {
@@ -1091,7 +1100,9 @@ window.__ModuleLoader__.load({
       rail.setAttribute('aria-valuemin', '0')
       rail.setAttribute('aria-valuemax', '100')
       rail.setAttribute('aria-label', T.railLabel)
-      rail.tabIndex = 0
+      // Focusable only while the map is up (see setVisible).
+      rail.tabIndex = -1
+      root.setAttribute('aria-hidden', 'true')
       const canvas = doc.createElement('canvas')
       canvas.className = 'dsh-strata-canvas'
       canvas.setAttribute('aria-hidden', 'true')
@@ -1163,6 +1174,12 @@ window.__ModuleLoader__.load({
       root.append(anchorsEl, rail, zoomer)
 
       const g = canvas.getContext('2d')
+      // The strata are painted once into an offscreen base and composited;
+      // hover feedback is painted over the composite, so moving the pointer
+      // along a 2000-band session redraws one band, not two thousand.
+      const base = doc.createElement('canvas')
+      const gb = base.getContext('2d')
+      let baseSignature = ''
       const thumb = createThumbSuppressor(THUMB_VARS)
       const turnRail = createTurnRailSuppressor(doc, () => Date.now())
       // Escape hatch for anyone who wants both navigators up at once.
@@ -1206,7 +1223,9 @@ window.__ModuleLoader__.load({
       let layoutDirty = true
       /** Rows the ResizeObserver reported since the last frame -> new height. */
       const resizedRows = new Map()
-      let observedRows = new WeakSet()
+      /** Every flow row under observation — hidden ones too, so a folded
+       *  turn opening again reports itself instead of waiting for a poll. */
+      let observedRows = new Set()
       let lastScrollHeight = -1
       let hoverIndex = -1
       /** Drag gesture on the rail, window frozen at pointerdown. */
@@ -1219,6 +1238,8 @@ window.__ModuleLoader__.load({
       let canvasSignature = ''
       let olderButton = null
       let disposed = false
+      /** Hot-path tallies, read through the replay seam only. */
+      const stats = { paints: 0, rebuilds: 0, resizes: 0, canvas: 0, base: 0, paintMs: 0 }
 
       try {
         pinned = window.localStorage.getItem(PIN_KEY) === '1'
@@ -1261,6 +1282,23 @@ window.__ModuleLoader__.load({
       })
       const ROW_SEL = '[data-chat-anchor-key]'
       const ERROR_SEL = '[data-state="error"], [data-error]'
+      /**
+       * The flow row owning a node. Anchor keys nest: a tool renderer puts
+       * its own `call:<id>` anchor INSIDE the flow row that carries the
+       * `<seq>:tool-call…` key, so the nearest anchored ancestor is not
+       * always the row — the map's rows are the outermost ones.
+       * @param node - any node inside the scrollport.
+       * @returns the outermost anchored ancestor, or null.
+       */
+      const rowOf = (node) => {
+        let row = node instanceof Element ? node.closest(ROW_SEL) : null
+        while (row !== null) {
+          const up = row.parentElement === null ? null : row.parentElement.closest(ROW_SEL)
+          if (up === null) return row
+          row = up
+        }
+        return null
+      }
       const carriesRow = (node) => node instanceof Element
         && (node.matches(ROW_SEL) || node.querySelector(ROW_SEL) !== null)
       const carriesError = (node) => node instanceof Element
@@ -1273,10 +1311,29 @@ window.__ModuleLoader__.load({
         let structural = false
         for (const record of records) {
           const target = record.target
-          const row = target instanceof Element ? target.closest(ROW_SEL) : null
+          const row = rowOf(target)
           if (record.type === 'attributes') {
-            const band = row === null ? undefined : bandByEl.get(row)
-            if (band === undefined || band.error !== (row.querySelector(ERROR_SEL) !== null)) {
+            // Attribute churn outside any row (disclosure state on the
+            // pager, the turn controls, the composer) owns no geometry; the
+            // height it moves is reported by the row observer.
+            if (row === null) continue
+            const name = record.attributeName
+            // A row hiding or showing ITSELF (turn folding sets `hidden` on
+            // the row) or changing kind is structure. The same attributes
+            // on a descendant are a height change, already reported.
+            if (target === row && (name === 'hidden' || name === 'data-chat-flow-kind')) {
+              structural = true
+              break
+            }
+            const band = bandByEl.get(row)
+            if (band === undefined) {
+              // No band: a hidden row's insides changing state is nothing
+              // to measure until the row itself comes back.
+              if (row.hasAttribute('hidden')) continue
+              structural = true
+              break
+            }
+            if (band.error !== (row.querySelector(ERROR_SEL) !== null)) {
               structural = true
               break
             }
@@ -1332,10 +1389,14 @@ window.__ModuleLoader__.load({
           seatObserver.disconnect()
           rowObserver.disconnect()
           flowObserver.disconnect()
-          observedRows = new WeakSet()
+          observedRows = new Set()
           bandByEl = new Map()
           resizedRows.clear()
           seatEl = null
+          // A chain clicking a pager that no longer exists would only stall
+          // out; end it now, and forget the button with the scrollport.
+          loader.cancel()
+          olderButton = null
         }
         scroller = found
         if (scroller === null) return false
@@ -1347,7 +1408,7 @@ window.__ModuleLoader__.load({
           childList: true,
           subtree: true,
           attributes: true,
-          attributeFilter: ['data-state', 'data-error', 'data-chat-flow-kind'],
+          attributeFilter: ['data-state', 'data-error', 'data-chat-flow-kind', 'hidden'],
         })
         structureDirty = true
         layoutDirty = true
@@ -1417,16 +1478,25 @@ window.__ModuleLoader__.load({
       function findOlderButton(firstRow) {
         if (firstRow === undefined || firstRow === null) return null
         let positional = null
+        let candidates = 0
         for (const button of scroller.querySelectorAll('button')) {
           const relation = button.compareDocumentPosition(firstRow)
-          // Only a control that precedes the first row can be the pager.
-          if ((relation & Node.DOCUMENT_POSITION_FOLLOWING) === 0) continue
-          // The pager's own label wins; position alone is the fallback, so a
-          // future control injected above the flow cannot hijack the cap.
+          // Only a control that precedes the first row can be the pager, and
+          // the list is in document order: past the row, nothing else can.
+          if ((relation & Node.DOCUMENT_POSITION_FOLLOWING) === 0) break
+          // The pager's own label wins outright.
           if (/加载更早|load\s?older|earlier/i.test(button.textContent || '')) return button
+          // Navigation chrome parked above the flow (the host's turn rail is
+          // a <nav> of one button per turn, in a sticky slot at the top) is
+          // never the pager — clicking a turn mark would scroll the reader
+          // away and read as a stalled page.
+          if (button.closest('nav, [role="navigation"]') !== null) continue
+          candidates += 1
           if (positional === null) positional = button
         }
-        return positional
+        // Position alone is trusted only when it is unambiguous: one control
+        // above the flow, not a row of them.
+        return candidates === 1 ? positional : null
       }
 
       /**
@@ -1435,13 +1505,45 @@ window.__ModuleLoader__.load({
        * on plain scroll or on in-row text churn.
        */
       function rebuild() {
+        stats.rebuilds += 1
         const scrollerRect = scroller.getBoundingClientRect()
         const scrollTop = scroller.scrollTop
-        const rows = scroller.querySelectorAll(ROW_SEL)
+        const anchored = scroller.querySelectorAll(ROW_SEL)
+        // Flow rows are the OUTERMOST anchored elements; an anchor nested in
+        // a row (a tool renderer's `call:<id>`) is that row's, not a row of
+        // its own — counting it would paint every tool call twice. Document
+        // order puts a nested anchor right after its owner, so one
+        // containment check per element finds them.
+        const rows = []
+        let outer = null
+        for (const el of anchored) {
+          if (outer !== null && outer.contains(el)) continue
+          outer = el
+          rows.push(el)
+        }
+        // One scan for failed rows instead of a subtree query per row: a
+        // failed tool or command marks its own row, and the map borrows that
+        // verdict rather than re-deriving one. `data-state` is the shared
+        // convention (ToolRow, GenericCommandCard, StateDot) and the only one
+        // that actually appears on a failed row — `data-error` exists on
+        // inner IO text in a couple of renderers, so it is kept as a
+        // secondary probe, never the primary one.
+        const failed = new Set()
+        for (const mark of scroller.querySelectorAll(ERROR_SEL)) {
+          const owner = rowOf(mark)
+          if (owner !== null) failed.add(owner)
+        }
         const next = []
         const byEl = new Map()
         let users = 0
         for (const row of rows) {
+          // Hidden rows are observed too: a folded turn opening is a size
+          // report on rows the map has no band for, which is the signal to
+          // measure again — no poll, no guess.
+          if (!observedRows.has(row)) {
+            observedRows.add(row)
+            rowObserver.observe(row)
+          }
           const rect = row.getBoundingClientRect()
           if (rect.height <= 0) continue
           const kind = row.dataset.chatFlowKind || 'unknown'
@@ -1455,13 +1557,7 @@ window.__ModuleLoader__.load({
             // transform in flight makes the rect differ); deltas are taken
             // against this, never against the rect.
             box: row.offsetHeight,
-            // A failed tool or command marks its own row; the map borrows that
-            // verdict rather than re-deriving one. `data-state` is the shared
-            // convention (ToolRow, GenericCommandCard, StateDot) and the only
-            // one that actually appears on a failed row — `data-error` exists
-            // on inner IO text in a couple of renderers, so it is kept as a
-            // secondary probe, never the primary one.
-            error: row.querySelector(ERROR_SEL) !== null,
+            error: failed.has(row),
             userIndex: -1,
           }
           if (isUserKind(kind)) {
@@ -1472,13 +1568,13 @@ window.__ModuleLoader__.load({
           if (tone !== undefined) band.anchorTone = tone
           next.push(band)
           byEl.set(row, band)
-          if (!observedRows.has(row)) {
-            observedRows.add(row)
-            rowObserver.observe(row)
-          }
         }
-        for (const el of bandByEl.keys()) {
-          if (byEl.has(el)) continue
+        // Rows that left the scrollport (a session switch, a replaced
+        // window) are let go, hidden or not; a detached row under
+        // observation reports nothing but is still held.
+        const present = new Set(rows)
+        for (const el of observedRows) {
+          if (present.has(el)) continue
           rowObserver.unobserve(el)
           observedRows.delete(el)
         }
@@ -1516,12 +1612,26 @@ window.__ModuleLoader__.load({
        * Fold the rows' reported size changes into the bands without reading
        * layout: the changed band takes its new height and every band below
        * it shifts by the difference.
+       * @returns true when the reports describe a change of STRUCTURE — a
+       *   band collapsing to nothing (a turn folding) or a row the map has no
+       *   band for gaining a box (a turn unfolding) — which only a full
+       *   measure can settle; a zero-height band would otherwise keep
+       *   painting at its kind's floor height as a phantom.
        */
       function applyResizes() {
+        stats.resizes += 1
         let changed = false
+        let structural = false
         for (const [el, height] of resizedRows) {
           const band = bandByEl.get(el)
-          if (band === undefined) continue
+          if (band === undefined) {
+            if (height > 0.5 && el.isConnected) structural = true
+            continue
+          }
+          if (height <= 0.5) {
+            structural = true
+            continue
+          }
           const delta = height - band.box
           if (Math.abs(delta) < 0.5) continue
           band.box = height
@@ -1530,10 +1640,12 @@ window.__ModuleLoader__.load({
           changed = true
         }
         resizedRows.clear()
-        if (!changed) return
+        if (structural) return true
+        if (!changed) return false
         contentHeight = Math.max(scroller.scrollHeight, 1)
         canvasSignature = ''
         anchorSignature = ''
+        return false
       }
 
       /**
@@ -1629,10 +1741,17 @@ window.__ModuleLoader__.load({
             dot.className = 'dsh-strata-anchor'
             anchorsEl.append(dot)
           }
-          dot.dataset.tone = anchor.tone
-          dot.dataset.index = String(anchor.index)
-          delete dot.dataset.active
-          dot.style.top = Math.round(anchor.y) + 'px'
+          // In a zoomed scale every dot slides on every scroll frame; only
+          // the position is new then — the identity, tone and label are
+          // written when the dot changes hands, not per frame.
+          const top = Math.round(anchor.y) + 'px'
+          if (dot.style.top !== top) dot.style.top = top
+          if (dot.dataset.tone !== anchor.tone) dot.dataset.tone = anchor.tone
+          if (dot.dataset.active !== undefined) delete dot.dataset.active
+          const id = String(anchor.index)
+          if (dot.dataset.index === id && dot.dataset.total === String(userTotal)) continue
+          dot.dataset.index = id
+          dot.dataset.total = String(userTotal)
           const counted = band.userIndex >= 0 && userTotal > 1
           const label = (T[band.kind] || T.unknown)
             + (counted ? ' ' + (band.userIndex + 1) + '/' + userTotal : '')
@@ -1673,6 +1792,11 @@ window.__ModuleLoader__.load({
        */
       function viewParams() {
         const target = targetWindow()
+        // The morph expires on the clock whatever the mode: a zoomed scale
+        // does not display it, but leaving it armed kept `animating` true
+        // and the map painting sixty frames a second, idle, until the next
+        // 全. (It is started by any prepend a chain lands, in every mode.)
+        if (morph !== null && performance.now() - morph.start >= morph.duration) morph = null
         // A mode switch glides from the old window to the new one.
         if (zoomAnim !== null) {
           const t = (performance.now() - zoomAnim.start) / zoomAnim.duration
@@ -1740,25 +1864,60 @@ window.__ModuleLoader__.load({
       }
 
       /**
-       * Repaint the band canvas; skipped while nothing that affects it
-       * changed. Only bands inside the display window are visited.
+       * Paint one band. Hover must not change the band's geometry — a size
+       * flick at this scale reads as jitter. Feedback is purely photometric:
+       * full alpha, a same-color glow, and a brightness lift painted onto
+       * the SAME path.
+       * @param ctx - target context, already in rail units.
+       * @param band - measured band.
        * @param view - display mapping.
+       * @param tones - palette.
+       * @param hovered - paint the hover treatment.
        */
-      function paintCanvas(view) {
-        const tones = palette()
-        const ratio = window.devicePixelRatio || 1
-        const signature = canvasSignatureOf({
-          railW, railH, contentHeight, count: bands.length, hoverIndex, colorStamp,
-          zoomMode, offset: view.offset, k: view.k, dpr: ratio,
-        })
-        if (signature === canvasSignature) return
-        canvasSignature = signature
+      function paintBand(ctx, band, view, tones, hovered) {
+        const { y, h: height, spec } = geometryOf(band, view)
+        if (y + height < -4 || y > railH + 4) return
+        const width = Math.max(2, railW * spec.width)
+        const x = railW - width
+        ctx.globalAlpha = hovered ? 1 : spec.alpha
+        ctx.fillStyle = band.error ? tones.error : tones[spec.tone]
+        if (spec.rule === true) {
+          // A compaction is a boundary, not a body: draw it as a rule so
+          // "the model stopped seeing history here" reads at a glance.
+          ctx.fillRect(0, Math.round(y) + 0.5, railW, 1)
+          ctx.globalAlpha = 0.35
+          ctx.fillRect(0, Math.round(y) + 2.5, railW, 1)
+          return
+        }
+        const radius = Math.min(spec.round, height / 2, width / 2)
+        if (hovered) {
+          ctx.shadowColor = ctx.fillStyle
+          ctx.shadowBlur = 7
+        }
+        ctx.beginPath()
+        if (typeof ctx.roundRect === 'function') {
+          ctx.roundRect(x, y, width, height, radius)
+        } else {
+          ctx.rect(x, y, width, height)
+        }
+        ctx.fill()
+        if (hovered) {
+          ctx.shadowBlur = 0
+          ctx.shadowColor = 'transparent'
+          // Brightness lift on the identical path: works on opaque bands
+          // (where raising alpha is a no-op) without touching geometry.
+          ctx.globalAlpha = 0.22
+          ctx.fillStyle = '#ffffff'
+          ctx.fill()
+        }
+      }
 
-        canvas.width = Math.max(1, Math.round(railW * ratio))
-        canvas.height = Math.max(1, Math.round(railH * ratio))
-        g.setTransform(ratio, 0, 0, ratio, 0, 0)
-        g.clearRect(0, 0, railW, railH)
-
+      /**
+       * Paint every band inside the display window into the base layer.
+       * @param view - display mapping.
+       * @param tones - palette.
+       */
+      function paintBase(view, tones) {
         // The window plus the tallest floor a band can wear, in content px.
         const slack = 8 / view.k
         const range = visibleRange(bands, view.offset - slack, view.offset + railH / view.k + slack)
@@ -1768,48 +1927,57 @@ window.__ModuleLoader__.load({
           for (let index = range.start; index <= range.end; index += 1) {
             const band = bands[index]
             if ((pass === 0) === isUserKind(band.kind)) continue
-            const { y, h: height, spec } = geometryOf(band, view)
-            if (y + height < -4 || y > railH + 4) continue
-            const hovered = index === hoverIndex
-            // Hover must not change the band's geometry — a size flick at this
-            // scale reads as jitter. Feedback is purely photometric: full
-            // alpha, a same-color glow, and a brightness lift painted onto the
-            // SAME path.
-            const width = Math.max(2, railW * spec.width)
-            const x = railW - width
-            g.globalAlpha = hovered ? 1 : spec.alpha
-            g.fillStyle = band.error ? tones.error : tones[spec.tone]
-            if (spec.rule === true) {
-              // A compaction is a boundary, not a body: draw it as a rule so
-              // "the model stopped seeing history here" reads at a glance.
-              g.fillRect(0, Math.round(y) + 0.5, railW, 1)
-              g.globalAlpha = 0.35
-              g.fillRect(0, Math.round(y) + 2.5, railW, 1)
-              continue
-            }
-            const radius = Math.min(spec.round, height / 2, width / 2)
-            if (hovered) {
-              g.shadowColor = g.fillStyle
-              g.shadowBlur = 7
-            }
-            g.beginPath()
-            if (typeof g.roundRect === 'function') {
-              g.roundRect(x, y, width, height, radius)
-            } else {
-              g.rect(x, y, width, height)
-            }
-            g.fill()
-            if (hovered) {
-              g.shadowBlur = 0
-              g.shadowColor = 'transparent'
-              // Brightness lift on the identical path: works on opaque bands
-              // (where raising alpha is a no-op) without touching geometry.
-              g.globalAlpha = 0.22
-              g.fillStyle = '#ffffff'
-              g.fill()
-            }
+            paintBand(gb, band, view, tones, false)
           }
         }
+        gb.globalAlpha = 1
+      }
+
+      /**
+       * Repaint the band canvas; skipped while nothing that affects it
+       * changed. The base layer is redrawn only when the strata themselves
+       * moved (scroll in a zoomed scale, growth, a theme or size change); a
+       * hover change composites the cached base and paints the one band.
+       * @param view - display mapping.
+       */
+      function paintCanvas(view) {
+        const tones = palette()
+        const ratio = window.devicePixelRatio || 1
+        const strata = canvasSignatureOf({
+          railW, railH, contentHeight, count: bands.length, hoverIndex: -1, colorStamp,
+          zoomMode, offset: view.offset, k: view.k, dpr: ratio,
+        })
+        const signature = strata + '#' + hoverIndex
+        if (signature === canvasSignature) return
+        canvasSignature = signature
+        stats.canvas += 1
+
+        const w = Math.max(1, Math.round(railW * ratio))
+        const hpx = Math.max(1, Math.round(railH * ratio))
+        if (strata !== baseSignature) {
+          baseSignature = strata
+          stats.base += 1
+          // Assigning a canvas size resets it even when unchanged: size only
+          // on a real change, clear otherwise.
+          if (base.width !== w || base.height !== hpx) {
+            base.width = w
+            base.height = hpx
+          }
+          gb.setTransform(ratio, 0, 0, ratio, 0, 0)
+          gb.clearRect(0, 0, railW, railH)
+          paintBase(view, tones)
+        }
+        if (canvas.width !== w || canvas.height !== hpx) {
+          canvas.width = w
+          canvas.height = hpx
+        }
+        g.setTransform(1, 0, 0, 1, 0, 0)
+        g.clearRect(0, 0, w, hpx)
+        g.drawImage(base, 0, 0)
+        const hovered = bands[hoverIndex]
+        if (hovered === undefined) return
+        g.setTransform(ratio, 0, 0, ratio, 0, 0)
+        paintBand(g, hovered, view, tones, true)
         g.globalAlpha = 1
       }
 
@@ -1821,13 +1989,19 @@ window.__ModuleLoader__.load({
         const viewport = scroller.clientHeight * view.k
         const height = Math.max(10, viewport)
         const y = clamp((scroller.scrollTop - view.offset) * view.k, 0, Math.max(0, railH - height))
-        lens.style.height = Math.round(height) + 'px'
-        lens.style.transform = 'translateY(' + Math.round(y) + 'px)'
-        shadeTop.style.height = Math.max(0, Math.round(y)) + 'px'
-        shadeBottom.style.top = Math.round(y + height) + 'px'
-        shadeBottom.style.height = Math.max(0, Math.round(railH - y - height)) + 'px'
+        const lensH = Math.round(height) + 'px'
+        const lensY = 'translateY(' + Math.round(y) + 'px)'
+        const topH = Math.max(0, Math.round(y)) + 'px'
+        const bottomY = Math.round(y + height) + 'px'
+        const bottomH = Math.max(0, Math.round(railH - y - height)) + 'px'
+        if (lens.style.height !== lensH) lens.style.height = lensH
+        if (lens.style.transform !== lensY) lens.style.transform = lensY
+        if (shadeTop.style.height !== topH) shadeTop.style.height = topH
+        if (shadeBottom.style.top !== bottomY) shadeBottom.style.top = bottomY
+        if (shadeBottom.style.height !== bottomH) shadeBottom.style.height = bottomH
         const denom = Math.max(1, contentHeight - scroller.clientHeight)
-        rail.setAttribute('aria-valuenow', String(Math.round(clamp(scroller.scrollTop / denom, 0, 1) * 100)))
+        const valuenow = String(Math.round(clamp(scroller.scrollTop / denom, 0, 1) * 100))
+        if (rail.getAttribute('aria-valuenow') !== valuenow) rail.setAttribute('aria-valuenow', valuenow)
         // "You are here": the last anchor at or above the reading line.
         const reading = scroller.scrollTop + scroller.clientHeight * 0.25
         let current = -1
@@ -1848,7 +2022,14 @@ window.__ModuleLoader__.load({
        * @param next - whether the map has something worth showing.
        */
       function setVisible(next) {
-        root.dataset.show = next ? '1' : '0'
+        if (root.dataset.show !== (next ? '1' : '0')) {
+          root.dataset.show = next ? '1' : '0'
+          // A stood-down map is out of the accessibility tree as well as
+          // out of sight: no tab stop on an invisible scrollbar, no dots
+          // from the previous session read out.
+          root.setAttribute('aria-hidden', next ? 'false' : 'true')
+          rail.tabIndex = next ? 0 : -1
+        }
         suppressNativeThumb(next)
         suppressNativeTurnRail(next)
         if (!next) closeWall()
@@ -1873,7 +2054,13 @@ window.__ModuleLoader__.load({
       const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
       const loader = createHistoryLoader({
         button: () => olderButton,
-        height: () => (scroller === null || !scroller.isConnected ? -1 : scroller.scrollHeight),
+        // A page prepends, so the topmost anchored row is new exactly when
+        // one landed — whatever it did to the height.
+        mark: () => {
+          if (scroller === null || !scroller.isConnected) return ''
+          const first = scroller.querySelector(ROW_SEL)
+          return first === null ? '' : (first.dataset.chatAnchorKey || '')
+        },
         now: () => Date.now(),
         wait,
         onPage: () => {
@@ -1904,10 +2091,19 @@ window.__ModuleLoader__.load({
         root.dataset.loading = '1'
         delete root.dataset.loadstate
         loadbar.style.width = '6%'
-        const result = await loader.run(kind, need, (pages) => {
-          if (epoch !== loadEpoch) return
-          loadbar.style.width = clamp(Math.round(progress(pages)), 6, 99) + '%'
-        })
+        let result
+        try {
+          result = await loader.run(kind, need, (pages) => {
+            if (epoch !== loadEpoch) return
+            loadbar.style.width = clamp(Math.round(progress(pages)), 6, 99) + '%'
+          })
+        } catch {
+          // A goal that threw (the scrollport went away under it) ends the
+          // chain like a stall: amber, then the bar retires — never a rail
+          // left pulsing forever.
+          loader.cancel()
+          result = { status: 'stalled', pages: 0 }
+        }
         if (disposed || epoch !== loadEpoch) return result.status
         if (result.status === 'cancelled' && loader.active() !== null) {
           // Another chain took the bar over; it will land it.
@@ -1993,25 +2189,50 @@ window.__ModuleLoader__.load({
       function paint() {
         frame = 0
         if (disposed) return
+        stats.paints += 1
+        const t0 = performance.now()
+        paintBody()
+        stats.paintMs += performance.now() - t0
+      }
+      /** Whether an unexplained scroll-height change already waited a frame. */
+      let growthWaited = false
+      function paintBody() {
         if (!ensureScroller()) {
           setVisible(false)
           return
         }
         checkSession()
+        let folded = false
+        if (!structureDirty && resizedRows.size > 0) {
+          if (applyResizes()) structureDirty = true
+          else {
+            lastScrollHeight = scroller.scrollHeight
+            folded = true
+          }
+        }
         if (structureDirty) {
           rebuild()
           lastScrollHeight = scroller.scrollHeight
           structureDirty = false
           canvasSignature = ''
-        } else if (resizedRows.size > 0) {
-          applyResizes()
-          lastScrollHeight = scroller.scrollHeight
-        } else if (scroller.scrollHeight !== lastScrollHeight) {
-          // Growth nobody reported (a row inserted without a structural
-          // mutation we recognised): fall back to a full measure.
-          rebuild()
-          lastScrollHeight = scroller.scrollHeight
-          canvasSignature = ''
+          growthWaited = false
+        } else if (!folded && scroller.scrollHeight !== lastScrollHeight) {
+          // Growth nobody has explained yet. The row observer runs AFTER
+          // layout, so a frame that a scroll or a store emit scheduled sees a
+          // streaming row's growth one step before its observer does — give
+          // the observer that frame, and only then fall back to a full
+          // measure (a row inserted without a mutation the map recognises).
+          if (growthWaited) {
+            rebuild()
+            lastScrollHeight = scroller.scrollHeight
+            canvasSignature = ''
+            growthWaited = false
+          } else {
+            growthWaited = true
+            schedule()
+          }
+        } else {
+          growthWaited = false
         }
         if (bands.length === 0 || contentHeight <= scroller.clientHeight * SHOW_RATIO) {
           setVisible(false)
@@ -2019,9 +2240,11 @@ window.__ModuleLoader__.load({
         }
         setVisible(true)
         if (layoutDirty) {
+          // The rail box and the DPR are part of the canvas key, so a pass
+          // that moved nothing repaints nothing — the 3s safety tick used to
+          // cost a full repaint of every band on a long session.
           layout()
           layoutDirty = false
-          canvasSignature = ''
         }
         const animating = morph !== null || zoomAnim !== null
         const view = viewParams()
@@ -2135,12 +2358,26 @@ window.__ModuleLoader__.load({
               .pipeThrough(new DecompressionStream('deflate-raw'))
             const reader = stream.getReader()
             const decoder = new TextDecoder()
-            for (;;) {
-              const { value, done } = await reader.read()
-              if (done) break
-              if (signal !== undefined && signal.aborted) throw new Error('aborted')
-              parser.push(decoder.decode(value, { stream: true }))
+            // A retired request stops inflating NOW: cancelling the reader
+            // releases the pipe instead of leaving it to finish the whole
+            // log for nobody. (The store already discards the result.)
+            const onAbort = () => {
+              reader.cancel().catch(() => {})
             }
+            if (signal !== undefined) {
+              if (signal.aborted) onAbort()
+              else signal.addEventListener('abort', onAbort, { once: true })
+            }
+            try {
+              for (;;) {
+                const { value, done } = await reader.read()
+                if (done) break
+                parser.push(decoder.decode(value, { stream: true }))
+              }
+            } finally {
+              if (signal !== undefined) signal.removeEventListener('abort', onAbort)
+            }
+            if (signal !== undefined && signal.aborted) throw new Error('aborted')
             parser.push(decoder.decode())
             return parser.end()
           }
@@ -2511,9 +2748,15 @@ window.__ModuleLoader__.load({
         const railRect = rail.getBoundingClientRect()
         const total = wallDom.prompts.length
         const loadedStart = Math.max(0, total - userTotal)
-        wallLink.setAttribute('width', String(Math.round(wallRect.width + 64)))
-        wallLink.setAttribute('height', String(Math.round(wallRect.height)))
+        const svgW = String(Math.round(wallRect.width + 64))
+        const svgH = String(Math.round(wallRect.height))
+        if (wallLink.getAttribute('width') !== svgW) wallLink.setAttribute('width', svgW)
+        if (wallLink.getAttribute('height') !== svgH) wallLink.setAttribute('height', svgH)
         const settling = performance.now() < wallDom.settleUntil
+        // Band index -> its dot, resolved once per frame instead of one
+        // selector query per string.
+        const dotByBand = new Map()
+        for (const dot of anchorsEl.children) dotByBand.set(dot.dataset.index, dot)
         for (const [i, path] of wallPaths) {
           if (i < wallWin.a || i > wallWin.b) {
             path.remove()
@@ -2534,10 +2777,8 @@ window.__ModuleLoader__.load({
           let endY = railRect.top + 2 - wallRect.top
           if (i >= loadedStart) {
             const bandIdx = userBandIndex[i - loadedStart]
-            const dot = bandIdx === undefined
-              ? null
-              : anchorsEl.querySelector('[data-index="' + bandIdx + '"]')
-            if (dot !== null) {
+            const dot = bandIdx === undefined ? undefined : dotByBand.get(String(bandIdx))
+            if (dot !== undefined) {
               const dotRect = dot.getBoundingClientRect()
               endX = dotRect.left + dotRect.width / 2 - wallRect.left
               endY = dotRect.top + dotRect.height / 2 - wallRect.top
@@ -2559,11 +2800,11 @@ window.__ModuleLoader__.load({
           if (focused) path.removeAttribute('stroke-dasharray')
           else path.setAttribute('stroke-dasharray', '4 4')
           const midX = (startX + endX) / 2
-          path.setAttribute('d',
-            'M ' + Math.round(startX) + ' ' + Math.round(startY)
+          const d = 'M ' + Math.round(startX) + ' ' + Math.round(startY)
             + ' C ' + Math.round(midX) + ' ' + Math.round(startY)
             + ', ' + Math.round(midX) + ' ' + Math.round(endY)
-            + ', ' + Math.round(endX) + ' ' + Math.round(endY))
+            + ', ' + Math.round(endX) + ' ' + Math.round(endY)
+          if (path.getAttribute('d') !== d) path.setAttribute('d', d)
         }
         if (settling) schedule()
       }
@@ -2921,11 +3162,11 @@ window.__ModuleLoader__.load({
         // extent is on hand — both with the rail loading bar. An auto page
         // in flight is superseded, never waited out.
         const goal = initialExtent * 2
-        const need = () => olderButton !== null
+        const need = () => olderButton !== null && scroller !== null
           && (mode === 'all' || scroller.scrollHeight < goal)
         if (!need()) return
         const startHeight = scroller.scrollHeight
-        runChain('zoom', need, (pages) => (mode === 'mid'
+        runChain('zoom', need, (pages) => (mode === 'mid' && scroller !== null
           ? 10 + 90 * clamp((scroller.scrollHeight - startHeight) / Math.max(1, goal - startHeight), 0, 1)
           : 100 * (1 - Math.pow(0.7, pages + 1))))
       }
@@ -3082,6 +3323,18 @@ window.__ModuleLoader__.load({
         if (doc.hidden) return
         markLayout()
       }, 3000)
+      // Read-only seam for the headless replay (test/replay): the measured
+      // bands and the derived counts, never a way in. Not a public API.
+      root.__dshStrata = {
+        bands: () => bands.map((band) => ({
+          kind: band.kind, top: band.top, height: band.height, box: band.box,
+          error: band.error, hidden: band.el.hasAttribute('hidden'),
+        })),
+        contentHeight: () => contentHeight,
+        userTotal: () => userTotal,
+        observed: () => observedRows.size,
+        stats: () => ({ ...stats }),
+      }
       schedule()
 
       return () => {
@@ -3137,6 +3390,7 @@ window.__ModuleLoader__.load({
         anchorsEl.remove()
         rail.remove()
         zoomer.remove()
+        delete root.__dshStrata
       }
     }
 
