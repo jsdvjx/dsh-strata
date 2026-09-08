@@ -1,6 +1,6 @@
 {
   "name": "dsh-strata",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "Session strata for the DeepSeek Harness Web GUI: the transcript's scrollbar becomes a to-scale, colour-coded map of the whole run — user messages emphasised, clickable anchors, auto-loading history, and a hover deck of every prompt in the session.",
   "keywords": [
     "dsh",
@@ -39,7 +39,8 @@
       "inject": [
         "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-client-ui-layout",
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-chat"
       ]
     }
   },

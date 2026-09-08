@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.12.0 — 2026-09-08
+
+Adapted to DSH 0.1.2-rc.1 (the current `latest`), verified on a live 0.1.2
+instance and an isolated 0.1.1-rc.2 — both run the same replay suite green.
+
+- **Labels through the host's locale service.** The built-in zh/en table is
+  registered as the `dsh-strata` namespace and every label is translated
+  through `ctx.locale.bind`, so a language switch in Settings → General
+  relabels the rail, the dots, the switcher and the wall in place — no
+  reload, no remount — and a language pack can translate the plugin into a
+  third-party language (new in 0.1.2). A host without the service (or one
+  that has not provided it yet) gets the built-in table keyed on the
+  document language, as before.
+- **The load chain survives 0.1.2's pager lifecycle.** The host unmounts the
+  "load older" control while a page is in flight and re-creates it after the
+  rows land, in a later commit; a measure taken between the two saw rows and
+  no pager, and a 全 or unloaded-card jump ended "incomplete" part-way with
+  the pager back on screen. A vanished pager now gets 600ms to return before
+  the chain calls the history exhausted. Progress is measured by anchored
+  rows landed (with the topmost key as tie-breaker): the key alone missed a
+  page that filled in a turn's older steps BELOW that turn's folding control.
+- **The dot column owns its pointer.** 0.1.2's content-width handle (40px,
+  col-resize, hover bar) sits under the dot column at laptop widths; with
+  the strip transparent to the pointer, a gap between two dots showed the
+  resize cursor and a drag there resized the column.
+- Manifest: `dsh.client.inject` names `@deepseek-ai/dsh-client-ui-chat`, the
+  package the rows come from since 0.1.2 (a soft ordering hint — a host
+  without the package skips it).
+- README: a compatibility table and what each 0.1.2 change means for the map.
+
 ## 0.11.0 — 2026-09-08
 
 Correctness and performance pass over the whole map, measured on a live

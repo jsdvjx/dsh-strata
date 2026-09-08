@@ -114,6 +114,12 @@ window.__ModuleLoader__.load({
   height: 100%;
   pointer-events: none;
 }
+/* The strip owns its 14px while the map is up. DSH 0.1.2 parks a
+   col-resize width handle (40px wide, hover bar and all) just outside the
+   content column, and at laptop widths that is exactly under the dot column:
+   with the strip transparent to the pointer, a gap between two dots showed
+   the host's resize cursor and a drag there resized the column. */
+.dsh-strata-root[data-show="1"] .dsh-strata-anchors { pointer-events: auto; }
 .dsh-strata-anchor.dsh-strata-anchor {
   position: absolute;
   right: 3px;
@@ -549,13 +555,49 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Pick the dictionary once per page: the shell's locale is not a service
-     * this plugin injects, and the document language is what it renders in.
+     * Pick the built-in dictionary for the document language — the fallback
+     * seat for a host without the locale service.
      * @returns the label table for the current language.
      */
     function dictionary() {
-      const lang = String(document.documentElement.lang || navigator.language || 'en').toLowerCase()
+      const documentLang = typeof document === 'undefined' ? '' : document.documentElement.lang
+      const browserLang = typeof navigator === 'undefined' ? '' : navigator.language
+      const lang = String(documentLang || browserLang || 'en').toLowerCase()
       return lang.indexOf('zh') === 0 ? DICT.zh : DICT.en
+    }
+
+    /**
+     * Fill `{name}` holes in a label.
+     * @param template - label with holes.
+     * @param params - values by hole name.
+     * @returns the filled label.
+     */
+    function interpolate(template, params) {
+      if (params === undefined) return template
+      return template.replace(/\{(\w+)\}/g, (hole, name) => (name in params ? String(params[name]) : hole))
+    }
+
+    /**
+     * The translation seat the map speaks through: `t(key, params)` plus a
+     * change subscription, so labels follow the user's language switch
+     * without a reload. Backed by the host's locale service (DSH 0.1.1+:
+     * `ctx.locale.register` / `bind` / `subscribe`) when it is there — which
+     * also lets a language pack translate this plugin into a third-party
+     * language by registering the `dsh-strata` namespace — and by the
+     * built-in zh/en table keyed on the document language otherwise.
+     * @param locale - the host's locale service, or undefined.
+     * @returns `{ t, subscribe }`.
+     */
+    function createI18n(locale) {
+      if (locale !== undefined && locale !== null
+        && typeof locale.bind === 'function' && typeof locale.subscribe === 'function') {
+        return { t: locale.bind(ID), subscribe: (fn) => locale.subscribe(fn) }
+      }
+      const table = dictionary()
+      return {
+        t: (key, params) => interpolate(table[key] !== undefined ? table[key] : (DICT.en[key] !== undefined ? DICT.en[key] : key), params),
+        subscribe: () => () => {},
+      }
     }
 
     /**
@@ -1004,16 +1046,23 @@ window.__ModuleLoader__.load({
     const LOAD_PAGE_CAP = 60
     /** How long one page may take before the chain calls it stalled. */
     const LOAD_PAGE_TIMEOUT = 5000
+    /**
+     * How long a vanished pager gets to come back before the chain calls the
+     * history exhausted. DSH 0.1.2 unmounts the "load older" control while a
+     * page is in flight and re-creates it after the rows land — in a later
+     * commit, so a measure taken between the two sees rows and no pager.
+     */
+    const PAGER_GRACE = 600
 
     /**
      * The one owner of "load older history" work. Auto-paging near the top,
      * a zoom that needs more session on hand and a wall jump above the
      * loaded window all run through here, so there is one task at a time,
      * one cancel, and a status that says whether the goal was reached.
-     * Progress is read from `deps.mark()` — the topmost row's identity, not
-     * the scroll height: a page that completes the history can make the
-     * host FOLD finished turns, and the transcript ends up shorter than
-     * before the page landed. Height would call that a stall.
+     * Progress is read from `deps.mark()` — the anchored row count (plus the
+     * topmost key), not the scroll height: a page that completes the history
+     * can make the host FOLD finished turns, and the transcript ends up
+     * shorter than before the page landed. Height would call that a stall.
      * @param deps - `{ button(), mark(), now(), wait(ms), onPage() }`.
      * @returns `{ run(kind, need, onProgress), cancel(), active() }`.
      */
@@ -1046,8 +1095,16 @@ window.__ModuleLoader__.load({
         const task = (async () => {
           while (need()) {
             if (pages >= LOAD_PAGE_CAP) return finish('capped')
-            const el = deps.button()
-            if (el === null || el === undefined) return finish('exhausted')
+            let el = deps.button()
+            if (el === null || el === undefined) {
+              const vanished = deps.now()
+              while ((el === null || el === undefined) && deps.now() - vanished < PAGER_GRACE) {
+                await deps.wait(100)
+                if (mine !== gen) return finish('cancelled')
+                el = deps.button()
+              }
+              if (el === null || el === undefined) return finish('exhausted')
+            }
             const before = deps.mark()
             const started = deps.now()
             el.click()
@@ -1085,11 +1142,14 @@ window.__ModuleLoader__.load({
      * @param root - the entry's own element (already in the overlay layer).
      * @param getSessionId - reads the staged session id.
      * @param subscribeSessions - subscribes to session-list changes.
+     * @param i18n - the translation seat (`createI18n`).
      * @returns disposer removing every listener, observer and timer.
      */
-    function mountMinimap(root, getSessionId, subscribeSessions) {
+    function mountMinimap(root, getSessionId, subscribeSessions, i18n) {
       const doc = root.ownerDocument
-      const T = dictionary()
+      const tr = i18n.t
+      /** Label for a row kind, with the unknown-kind fallback. */
+      const kindLabel = (kind) => tr(DICT.en[kind] !== undefined ? kind : 'unknown')
 
       const rail = doc.createElement('div')
       rail.className = 'dsh-strata-rail'
@@ -1099,7 +1159,7 @@ window.__ModuleLoader__.load({
       rail.setAttribute('aria-orientation', 'vertical')
       rail.setAttribute('aria-valuemin', '0')
       rail.setAttribute('aria-valuemax', '100')
-      rail.setAttribute('aria-label', T.railLabel)
+      rail.setAttribute('aria-label', tr('railLabel'))
       // Focusable only while the map is up (see setVisible).
       rail.tabIndex = -1
       root.setAttribute('aria-hidden', 'true')
@@ -1117,19 +1177,19 @@ window.__ModuleLoader__.load({
       const zoomer = doc.createElement('div')
       zoomer.className = 'dsh-strata-zoom'
       zoomer.setAttribute('role', 'group')
-      zoomer.setAttribute('aria-label', T.zoomGroup)
+      zoomer.setAttribute('aria-label', tr('zoomGroup'))
       const ZOOMS = [
-        { mode: 'init', glyph: '近', title: T.zoomInit },
-        { mode: 'mid', glyph: '中', title: T.zoomMid },
-        { mode: 'all', glyph: '全', title: T.zoomAll },
+        { mode: 'init', glyph: '近', key: 'zoomInit' },
+        { mode: 'mid', glyph: '中', key: 'zoomMid' },
+        { mode: 'all', glyph: '全', key: 'zoomAll' },
       ]
       for (const z of ZOOMS) {
         const button = doc.createElement('button')
         button.type = 'button'
         button.dataset.zoom = z.mode
         button.textContent = z.glyph
-        button.title = z.title
-        button.setAttribute('aria-label', z.title)
+        button.title = tr(z.key)
+        button.setAttribute('aria-label', tr(z.key))
         zoomer.append(button)
       }
       const loadbar = doc.createElement('div')
@@ -1137,7 +1197,7 @@ window.__ModuleLoader__.load({
       const older = doc.createElement('div')
       older.className = 'dsh-strata-older'
       older.setAttribute('aria-hidden', 'true')
-      older.title = T.older
+      older.title = tr('older')
       older.textContent = '⌃'
       const anchorsEl = doc.createElement('div')
       anchorsEl.className = 'dsh-strata-anchors'
@@ -1214,6 +1274,8 @@ window.__ModuleLoader__.load({
       let anchorSignature = ''
       let activeAnchor = -1
       let userTotal = 0
+      /** Bumped on a language switch so every dot rewrites its label. */
+      let labelRev = 0
       let contentHeight = 1
       let railH = 0
       let railW = REST_W_MIN
@@ -1239,7 +1301,7 @@ window.__ModuleLoader__.load({
       let olderButton = null
       let disposed = false
       /** Hot-path tallies, read through the replay seam only. */
-      const stats = { paints: 0, rebuilds: 0, resizes: 0, canvas: 0, base: 0, paintMs: 0 }
+      const stats = { paints: 0, rebuilds: 0, resizes: 0, canvas: 0, base: 0, paintMs: 0, chain: '' }
 
       try {
         pinned = window.localStorage.getItem(PIN_KEY) === '1'
@@ -1749,11 +1811,12 @@ window.__ModuleLoader__.load({
           if (dot.dataset.tone !== anchor.tone) dot.dataset.tone = anchor.tone
           if (dot.dataset.active !== undefined) delete dot.dataset.active
           const id = String(anchor.index)
-          if (dot.dataset.index === id && dot.dataset.total === String(userTotal)) continue
+          const stamp = String(userTotal) + '.' + String(labelRev)
+          if (dot.dataset.index === id && dot.dataset.total === stamp) continue
           dot.dataset.index = id
-          dot.dataset.total = String(userTotal)
+          dot.dataset.total = stamp
           const counted = band.userIndex >= 0 && userTotal > 1
-          const label = (T[band.kind] || T.unknown)
+          const label = kindLabel(band.kind)
             + (counted ? ' ' + (band.userIndex + 1) + '/' + userTotal : '')
           dot.title = label
           dot.setAttribute('aria-label', label)
@@ -2054,12 +2117,15 @@ window.__ModuleLoader__.load({
       const wait = (ms) => new Promise((resolve) => window.setTimeout(resolve, ms))
       const loader = createHistoryLoader({
         button: () => olderButton,
-        // A page prepends, so the topmost anchored row is new exactly when
-        // one landed — whatever it did to the height.
+        // A landed page is more anchored rows, whatever it did to the
+        // height. The topmost key alone is not enough: a turn's folding
+        // control stays first while a page fills in that turn's older steps
+        // BELOW it, so the key is only a tie-breaker.
         mark: () => {
           if (scroller === null || !scroller.isConnected) return ''
           const first = scroller.querySelector(ROW_SEL)
-          return first === null ? '' : (first.dataset.chatAnchorKey || '')
+          return String(scroller.querySelectorAll(ROW_SEL).length) + ':'
+            + (first === null ? '' : (first.dataset.chatAnchorKey || ''))
         },
         now: () => Date.now(),
         wait,
@@ -2104,6 +2170,7 @@ window.__ModuleLoader__.load({
           loader.cancel()
           result = { status: 'stalled', pages: 0 }
         }
+        stats.chain = kind + ':' + result.status + ':' + result.pages
         if (disposed || epoch !== loadEpoch) return result.status
         if (result.status === 'cancelled' && loader.active() !== null) {
           // Another chain took the bar over; it will land it.
@@ -2114,13 +2181,13 @@ window.__ModuleLoader__.load({
           await wait(200)
         } else if (result.status !== 'cancelled') {
           root.dataset.loadstate = 'incomplete'
-          older.title = T.incomplete
+          older.title = tr('incomplete')
           await wait(1200)
         }
         if (disposed || epoch !== loadEpoch) return result.status
         root.dataset.loading = '0'
         delete root.dataset.loadstate
-        older.title = T.older
+        older.title = tr('older')
         window.setTimeout(() => {
           if (epoch === loadEpoch) loadbar.style.width = '0%'
         }, 300)
@@ -2291,7 +2358,7 @@ window.__ModuleLoader__.load({
       function previewOf(band) {
         const raw = band.el.innerText || band.el.textContent || ''
         const text = raw.replace(/\s+/g, ' ').trim()
-        if (text === '') return T.empty
+        if (text === '') return tr('empty')
         return text.length > 220 ? text.slice(0, 220) + '…' : text
       }
 
@@ -2466,7 +2533,7 @@ window.__ModuleLoader__.load({
         head.append(no, meta)
         const body = doc.createElement('div')
         body.className = 'dsh-strata-wallcardbody'
-        body.textContent = prompt.text === '' ? T.empty : prompt.text
+        body.textContent = prompt.text === '' ? tr('empty') : prompt.text
         el.append(head, body)
         // Land silently; the swap spring only applies to LATER moves.
         el.style.transition = 'none'
@@ -2599,9 +2666,9 @@ window.__ModuleLoader__.load({
         if (wallDom === null) return
         const prompts = wallDom.prompts
         const total = prompts.length
-        wallTitle.textContent = T.wallTitle.replace('{n}', String(total))
+        wallTitle.textContent = tr('wallTitle', { n: total })
         wall.setAttribute('aria-label', wallTitle.textContent)
-        wallHint.textContent = T.wallHint
+        wallHint.textContent = tr('wallHint')
         // The pagers always occupy their rows (visibility, not display), so
         // this measure is the area the cards will really have.
         const area = wallCards.getBoundingClientRect()
@@ -2687,10 +2754,10 @@ window.__ModuleLoader__.load({
         wallDom.rects.clear()
         wallDom.settleUntil = performance.now() + 400
         wallPagerTop.dataset.on = a > 0 ? '1' : '0'
-        wallPagerTop.textContent = T.pageUp.replace('{n}', String(a))
+        wallPagerTop.textContent = tr('pageUp', { n: a })
         wallPagerTop.setAttribute('aria-hidden', a > 0 ? 'false' : 'true')
         wallPagerBottom.dataset.on = b < total - 1 ? '1' : '0'
-        wallPagerBottom.textContent = T.pageDown.replace('{n}', String(total - 1 - b))
+        wallPagerBottom.textContent = tr('pageDown', { n: total - 1 - b })
         wallPagerBottom.setAttribute('aria-hidden', b < total - 1 ? 'false' : 'true')
         if (fresh.length > 0) {
           window.requestAnimationFrame(() => {
@@ -2724,11 +2791,11 @@ window.__ModuleLoader__.load({
             ? new Date(prompts[i].time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
             : ''
           meta.textContent = '/' + total + (when === '' ? '' : ' · ' + when)
-            + (i < loadedStart ? ' · ' + T.unloaded : '')
+            + (i < loadedStart ? ' · ' + tr('unloaded') : '')
           el.setAttribute('aria-label',
-            T.cardLabel.replace('{i}', String(i + 1)).replace('{n}', String(total))
-            + (prompts[i].text === '' ? T.empty : prompts[i].text)
-            + (i < loadedStart ? ' (' + T.unloaded + ')' : ''))
+            tr('cardLabel', { i: i + 1, n: total })
+            + (prompts[i].text === '' ? tr('empty') : prompts[i].text)
+            + (i < loadedStart ? ' (' + tr('unloaded') + ')' : ''))
         }
         schedule()
       }
@@ -3310,6 +3377,40 @@ window.__ModuleLoader__.load({
       // Session switches arrive from the store, not from a poll.
       const unsubscribeSessions = subscribeSessions(schedule)
 
+      /**
+       * The user switched language (or a language pack landed): rewrite
+       * every label in place — no remount, the map keeps its state.
+       */
+      function relabel() {
+        rail.setAttribute('aria-label', tr('railLabel'))
+        zoomer.setAttribute('aria-label', tr('zoomGroup'))
+        for (const z of ZOOMS) {
+          const button = zoomer.querySelector('button[data-zoom="' + z.mode + '"]')
+          if (button === null) continue
+          button.title = tr(z.key)
+          button.setAttribute('aria-label', tr(z.key))
+        }
+        older.title = tr(root.dataset.loadstate === 'incomplete' ? 'incomplete' : 'older')
+        labelRev += 1
+        anchorSignature = ''
+        if (wallDom !== null) {
+          const total = wallDom.prompts.length
+          wallTitle.textContent = tr('wallTitle', { n: total })
+          wall.setAttribute('aria-label', wallTitle.textContent)
+          wallHint.textContent = tr('wallHint')
+          wallPagerTop.textContent = tr('pageUp', { n: wallWin.a })
+          wallPagerBottom.textContent = tr('pageDown', { n: Math.max(0, total - 1 - wallWin.b) })
+          for (const [i, ref] of wallDom.cards) {
+            if (wallDom.prompts[i].text === '') ref.el.lastElementChild.textContent = tr('empty')
+          }
+          restyleWall()
+        }
+        schedule()
+      }
+      const unsubscribeLocale = i18n.subscribe(() => {
+        if (!disposed) relabel()
+      })
+
       if (pinned) {
         expanded = true
         root.dataset.expanded = '1'
@@ -3342,6 +3443,7 @@ window.__ModuleLoader__.load({
         loader.cancel()
         promptStore.dispose()
         unsubscribeSessions()
+        unsubscribeLocale()
         if (collapseTimer !== 0) window.clearTimeout(collapseTimer)
         if (frame !== 0) window.cancelAnimationFrame(frame)
         window.clearInterval(ticker)
@@ -3398,6 +3500,33 @@ window.__ModuleLoader__.load({
     let getSessionId = () => undefined
     /** Resolved by apply(); subscribes to the session list store. */
     let subscribeSessions = () => () => {}
+    /** Resolved by apply(); the host's locale service when it is there. */
+    let getLocale = () => undefined
+    /** Whether the `dsh-strata` dictionary is registered with the host. */
+    let dictionaryRegistered = false
+
+    /**
+     * Register the built-in dictionary with the host's locale service once.
+     * Retried at mount because the overlay mounts after the shell booted,
+     * where a service missing at apply time may have arrived.
+     * @param ctx - client context, for the disposer.
+     * @returns the locale service when it is usable.
+     */
+    function ensureDictionary(ctx) {
+      const locale = getLocale()
+      if (locale === undefined || locale === null || typeof locale.register !== 'function') return undefined
+      if (!dictionaryRegistered) {
+        try {
+          const off = locale.register(ID, { zh: DICT.zh, en: DICT.en })
+          dictionaryRegistered = true
+          if (typeof ctx.effect === 'function') ctx.effect(() => () => { dictionaryRegistered = false; off() })
+        } catch {
+          // Already registered by a previous life of this plugin: keep it.
+          dictionaryRegistered = true
+        }
+      }
+      return locale
+    }
 
     /**
      * The slot entry: a bare element the imperative engine owns.
@@ -3408,19 +3537,32 @@ window.__ModuleLoader__.load({
       react.useEffect(() => {
         const element = ref.current
         if (element === null) return undefined
-        return mountMinimap(element, getSessionId, subscribeSessions)
+        return mountMinimap(element, getSessionId, subscribeSessions, createI18n(ensureDictionary(pluginCtx)))
       }, [])
       return h('div', { ref, className: 'dsh-strata-root', 'data-plugin': ID, 'data-show': '0' })
     }
 
-    /** Required services: the slot registry alone; no session data is read. */
+    /** Required services: the slot registry alone; no session data is read.
+     *  The locale service is optional — resolved through `ctx.get`, never
+     *  waited on — so a composition without it still mounts the map. */
     const inject = ['slots']
+    /** The client context, for the seams resolved lazily at mount. */
+    let pluginCtx = null
 
     /**
      * Client plugin body: one additive entry in the frame-wide overlay layer.
      * @param ctx - client context.
      */
     function apply(ctx) {
+      pluginCtx = ctx
+      getLocale = () => {
+        try {
+          return ctx.get('locale')
+        } catch {
+          return undefined
+        }
+      }
+      ensureDictionary(ctx)
       getSessionId = () => {
         const sessions = ctx.get('sessions')
         if (sessions === undefined) return undefined
@@ -3463,6 +3605,9 @@ window.__ModuleLoader__.load({
       wheelPixels,
       createThumbSuppressor,
       createTurnRailSuppressor,
+      createI18n,
+      interpolate,
+      DICT,
       promptOf,
       createPromptParser,
       parsePrompts,

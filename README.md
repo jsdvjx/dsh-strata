@@ -126,6 +126,29 @@ history shifts the window, never the scale.
 The map hides itself when there is nothing to navigate: no session, a transcript that does
 not scroll, or a non-chat view such as Trajectory.
 
+## Compatibility
+
+| DSH | Status |
+|---|---|
+| 0.1.2-rc.1 | Tested — turn folding, the turn navigator, the width handle and the locale switch are all accounted for (see below) |
+| 0.1.1-rc.2 | Tested — nothing 0.1.2-specific is required; every seam degrades to the old behaviour |
+
+What 0.1.2 brought, and what the map does about it:
+
+- **Turn folding** (Compact mode hides a finished turn's process rows in place): folded
+  rows leave the map the moment they fold, and come back the moment they open.
+- **The turn navigator**: hidden while the map is up, handed back when it stands down
+  (`localStorage['dsh-strata.native-turn-rail'] = 'keep'` keeps both).
+- **The content-width handle** sits under the dot column at laptop widths: the column
+  owns its 14px, so a gap between two dots is not a resize grip.
+- **Language switching**: labels come through the host's locale service and follow a
+  switch in Settings → General without a reload; a language pack can translate the
+  `dsh-strata` namespace into a third-party language. A host without the service
+  gets the built-in zh/en table keyed on the document language.
+- **Pager lifecycle**: 0.1.2 unmounts the "load older" control while a page is in
+  flight; the load chain waits for it to come back instead of calling the history
+  exhausted, and measures progress by rows landed rather than by scroll height.
+
 ## Install
 
 ```sh
@@ -155,7 +178,9 @@ that row's registered Chat Node kind, `data-state="error"` for a failed tool or 
 `hidden` on a row for the turn folding DSH 0.1.2 does in Compact mode,
 `[data-composer-seat]` to stay clear of the sticky composer. It
 contributes one entry to the frame-wide `shell.overlay` list slot, so it adds a surface
-instead of replacing one, and uninstalling leaves the native UI untouched. The scrollbar
+instead of replacing one, and uninstalling leaves the native UI untouched. Labels are
+registered with the host's locale service as the `dsh-strata` namespace and translated
+through its `t` seat, so they follow the UI language live. The scrollbar
 takeover uses the theme's documented seam — rebinding `--dsh-scrollbar-thumb` to
 `transparent` on the scrollport, the same mechanism ui-sidebar uses — so both the WebKit
 and Firefox rendering paths are covered and no stylesheet is overridden.

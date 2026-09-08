@@ -4,7 +4,7 @@ import { internals, id } from './load.js'
 
 const {
   windowFor, canvasSignatureOf, scrubTarget, visibleRange, wheelPixels,
-  createThumbSuppressor, createTurnRailSuppressor, promptOf, parsePrompts, createPromptParser,
+  createThumbSuppressor, createTurnRailSuppressor, createI18n, interpolate, DICT, promptOf, parsePrompts, createPromptParser,
   createPromptStore, createHistoryLoader, LOAD_PAGE_CAP, CSS,
 } = internals
 
@@ -119,6 +119,41 @@ test('thumb suppressor restores the old element when the scroller is swapped', (
   thumb.hold(b) // idempotent
   thumb.release()
   assert.deepEqual(b.style.dump(), {})
+})
+
+// ── i18n: the host's locale seat when present, the built-in table otherwise ──
+test('interpolate fills named holes and leaves unknown ones visible', () => {
+  assert.equal(interpolate('{n} prompts', { n: 3 }), '3 prompts')
+  assert.equal(interpolate('Prompt {i} of {n}: ', { i: 1, n: 38 }), 'Prompt 1 of 38: ')
+  assert.equal(interpolate('{x} and {y}', { x: 'a' }), 'a and {y}')
+  assert.equal(interpolate('plain'), 'plain')
+})
+
+test('i18n falls back to the built-in table and to English, and echoes unknown keys', () => {
+  const seat = createI18n(undefined)
+  assert.equal(seat.t('wallTitle', { n: 38 }), DICT.en.wallTitle.replace('{n}', '38'))
+  assert.equal(seat.t('no-such-key'), 'no-such-key')
+  assert.equal(typeof seat.subscribe(() => {}), 'function')
+})
+
+test('i18n binds the host locale namespace and relays its change subscription', () => {
+  const listeners = new Set()
+  const bound = []
+  const locale = {
+    bind: (ns) => { bound.push(ns); return (key, params) => 'host:' + key + (params ? JSON.stringify(params) : '') },
+    subscribe: (fn) => { listeners.add(fn); return () => listeners.delete(fn) },
+  }
+  const seat = createI18n(locale)
+  assert.deepEqual(bound, ['dsh-strata'])
+  assert.equal(seat.t('pageUp', { n: 2 }), 'host:pageUp{"n":2}')
+  let fired = 0
+  const off = seat.subscribe(() => { fired += 1 })
+  for (const fn of listeners) fn()
+  off()
+  for (const fn of listeners) fn()
+  assert.equal(fired, 1)
+  // A half-formed service (no subscribe) is not trusted: built-in table instead.
+  assert.equal(createI18n({ bind: () => () => 'x' }).t('empty'), DICT.en.empty)
 })
 
 // ── the host's own turn rail: hidden only while the map is up ─────────────
@@ -379,22 +414,25 @@ test('store: failures back off instead of refetching on every hover', async () =
 })
 
 // ── P2-1: history loader ──────────────────────────────────────────────────
-function fakeHost({ pages = Infinity, grow = 500, latency = 1, stallAfter = Infinity, fold = false } = {}) {
+function fakeHost({ pages = Infinity, grow = 500, latency = 1, stallAfter = Infinity, fold = false, remountTicks = 0 } = {}) {
   let height = 1000
   let clock = 0
   let remaining = pages
   let queued = 0
   let clicks = 0
   let landed = 0
+  /** Ticks the pager stays unmounted after a page lands (DSH 0.1.2 does this). */
+  let unmounted = 0
   const button = { click() { clicks += 1; if (remaining > 0 && clicks <= stallAfter) queued = latency } }
   const deps = {
-    button: () => (remaining > 0 ? button : null),
+    button: () => (remaining > 0 && unmounted === 0 ? button : null),
     height: () => height,
     // The topmost row's key: new on every landed page.
     mark: () => 'row-' + landed,
     now: () => clock,
     wait: async (ms) => {
       clock += ms
+      if (unmounted > 0) unmounted -= 1
       if (queued > 0) {
         queued -= 1
         if (queued === 0) {
@@ -403,6 +441,7 @@ function fakeHost({ pages = Infinity, grow = 500, latency = 1, stallAfter = Infi
           height += fold && remaining === 1 ? -grow * 3 : grow
           remaining -= 1
           landed += 1
+          unmounted = remountTicks
         }
       }
     },
@@ -431,6 +470,20 @@ test('loader: a page that FOLDS the transcript shorter still counts as progress'
   assert.ok(host.height() < 1000, 'the host really did shrink: ' + host.height())
 })
 
+test('loader: a pager that unmounts while a page lands is waited for, not called exhausted', async () => {
+  // Three ticks of 100ms with no button after every page — inside the grace.
+  const host = fakeHost({ pages: 4, remountTicks: 3 })
+  const loader = createHistoryLoader(host)
+  const result = await loader.run('jump', () => host.pagesLanded() < 4)
+  assert.deepEqual(result, { status: 'done', pages: 4 })
+  // Gone for good is still exhausted — after the grace, not before.
+  const gone = fakeHost({ pages: 1, remountTicks: 1000 })
+  const second = createHistoryLoader(gone)
+  const out = await second.run('jump', () => true)
+  assert.deepEqual(out, { status: 'exhausted', pages: 1 })
+  assert.ok(gone.now() >= 600, 'waited the grace before giving up: ' + gone.now())
+})
+
 test('loader: a page with no progress stops the chain at once', async () => {
   const host = fakeHost({ pages: 10, stallAfter: 2 })
   const loader = createHistoryLoader(host)
@@ -457,12 +510,14 @@ test('loader: running out of pager before the goal is exhausted', async () => {
 
 test('loader: a chain that finishes at once leaves no phantom active record', async () => {
   // Goal already met: the body returns before the first await.
-  const met = createHistoryLoader({ button: () => ({ click() {} }), height: () => 100, now: () => 0, wait: async () => {}, onPage: () => {} })
+  const met = createHistoryLoader({ button: () => ({ click() {} }), mark: () => 'row-0', now: () => 0, wait: async () => {}, onPage: () => {} })
   const done = await met.run('jump', () => false)
   assert.equal(done.status, 'done')
   assert.equal(met.active(), null)
-  // Pager already gone: same synchronous exit, same expectation.
-  const gone = createHistoryLoader({ button: () => null, height: () => 100, now: () => 0, wait: async () => {}, onPage: () => {} })
+  // Pager gone before the first click: exhausted once the grace elapses,
+  // and the record is gone with it.
+  let clock = 0
+  const gone = createHistoryLoader({ button: () => null, mark: () => 'row-0', now: () => clock, wait: async (ms) => { clock += ms }, onPage: () => {} })
   const out = await gone.run('zoom', () => true)
   assert.equal(out.status, 'exhausted')
   assert.equal(gone.active(), null)
