@@ -453,6 +453,17 @@ window.__ModuleLoader__.load({
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 10;
 }
+/* A modal owns the screen. The overlay layer the map lives in stacks at
+   z-index 20 of the frame, while the host's settings dialog renders in place
+   inside the sidebar: once anything opens a stacking context on that column
+   (a theme, another plugin), the dialog's z-index 1000 is trapped below the
+   layer and the rail, dots and wall paint straight over it (#3). No z-index
+   gets a layer entry under such a dialog, so the map steps out while any
+   aria-modal dialog is up. Visibility, not display: the engine's measurements
+   hold, and the wall's own visible cards and pagers go too. */
+body:has([aria-modal="true"]:not([hidden])) .dsh-strata-root.dsh-strata-root,
+body:has([aria-modal="true"]:not([hidden])) .dsh-strata-wall,
+body:has([aria-modal="true"]:not([hidden])) .dsh-strata-wall * { visibility: hidden; }
 @media (prefers-reduced-motion: reduce) {
   .dsh-strata-root.dsh-strata-root, .dsh-strata-canvas,
   .dsh-strata-wallcard, .dsh-strata-older { transition: none; animation: none; }

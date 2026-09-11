@@ -552,3 +552,17 @@ test('wall pagers reserve their height while hidden', () => {
   assert.doesNotMatch(rule, /display:\s*none/)
   assert.match(CSS, /\.dsh-strata-wallpager\[data-on="1"\]\s*\{[^}]*visibility:\s*visible/)
 })
+
+// ── #3: a modal dialog covers the map ─────────────────────────────────────
+test('an open aria-modal dialog hides the rail and the whole wall', () => {
+  const modal = 'body:has([aria-modal="true"]:not([hidden]))'
+  const at = CSS.indexOf(modal + ' .dsh-strata-root.dsh-strata-root')
+  assert.ok(at !== -1, 'root rule missing')
+  const rule = CSS.slice(at, CSS.indexOf('}', at))
+  assert.ok(rule.includes(modal + ' .dsh-strata-wall,'))
+  // The wall's live cards and pagers set visibility: visible themselves, so
+  // hiding the container alone would leave them on screen.
+  assert.ok(rule.includes(modal + ' .dsh-strata-wall *'))
+  assert.match(rule, /visibility:\s*hidden/)
+  assert.doesNotMatch(rule, /display:\s*none/)
+})

@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.12.1 — 2026-09-11
+
+- **The map no longer paints over the settings dialog (#3).** The map lives
+  in the host's frame-wide overlay layer (`z-index: 20`), while the settings
+  dialog renders in place inside the sidebar. Once anything opens a stacking
+  context on that column (a theme, another plugin), the dialog's
+  `z-index: 1000` is trapped below the layer, and with the right-hand panel
+  open, which puts the rail inside the dialog, the rail, the dots and the
+  clue wall were drawn on top of it. No z-index can get a layer entry under
+  such a dialog, so the map and the wall now step out (`visibility: hidden`,
+  layout untouched) while any `aria-modal` dialog is up, and come back when
+  it closes. Reproduced and verified on an isolated DSH 0.1.5-rc.1.
+
 ## 0.12.0 — 2026-09-08
 
 Adapted to DSH 0.1.2-rc.1 (the current `latest`), verified on a live 0.1.2
